@@ -1,0 +1,10 @@
+* [33mbb4db0c[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Initial commit
+* [33mcb6baa8[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m feat: implement comment functionality with add, update, delete, and retrieval features; add like functionality for videos and comments
+* [33mffbac2a[m feat: add delete avatar and cover image functionality, username availability check, and refresh access token route
+* [33m4449566[m feat: add update profile functionality to auth routes
+* [33m95ab771[m feat: add logout, refresh token, and update profile functionality
+* [33md5bb2a3[m feat: add cover image upload and retrieval functionality with S3 integration
+* [33m0be1c9e[m feat: add email verification and OTP management functionality
+* [33mee9b788[m feat: implement password reset functionality with OTP verification and email notifications
+* [33m80ffb8f[m feat: add getAvatar endpoint to fetch user avatar from S3
+* [33ma9977ec[m feat: add avatar upload and update functionality with S3 integration
