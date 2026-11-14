@@ -2,7 +2,6 @@ import {ApiError} from "../utils/ApiError.js"
 import {asyncHandler} from "../utils/asyncHandler.js"
 import {ApiResponse} from "../utils/ApiResponse.js"
 import mongoose from "mongoose";
-import { User } from '../model/User.model.js';
 import { WatchHistory } from "../model/WatchHistory.model.js";
 import { Video } from '../model/Video.model.js';
 
