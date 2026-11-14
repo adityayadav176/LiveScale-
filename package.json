@@ -1,0 +1,32 @@
+{
+  "name": "livescale_video",
+  "version": "1.0.0",
+  "description": "LiveScale A Scalable video ",
+  "license": "ISC",
+  "author": "Aditya Yadav",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1168.0",
+    "@aws-sdk/s3-request-presigner": "^3.1168.0",
+    "bcrypt": "^6.0.0",
+    "bullmq": "^6.7.5",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "crypto": "^1.0.1",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "helmet": "^8.3.0",
+    "ioredis": "^6.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "k6": "^0.0.0",
+    "mongoose": "^9.12.1",
+    "morgan": "^1.12.1",
+    "nodemailer": "^10.5.0",
+    "nodemon": "^3.1.14"
+  }
+}
