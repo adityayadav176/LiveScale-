@@ -1,25 +1,26 @@
 
-import mongoose, { Schema, model } from "mongoose";
+import { Schema, model } from "mongoose";
 
 const subscriptionSchema = new Schema(
     {
         subscriber: {
             type: Schema.Types.ObjectId,
             ref: "User",
-            required: true,
+            required: true
         },
 
         channel: {
             type: Schema.Types.ObjectId,
             ref: "User",
-            required: true,
-        },
+            required: true
+        }
     },
     {
-        timestamps: true,
+        timestamps: true
     }
 );
 
+// Prevent duplicate subscriptions
 subscriptionSchema.index(
     { subscriber: 1, channel: 1 },
     { unique: true }
@@ -27,8 +28,15 @@ subscriptionSchema.index(
 
 // Prevent users from subscribing to themselves
 subscriptionSchema.pre("validate", function () {
-    if (this.subscriber && this.subscriber.equals(this.channel)) {
-        this.invalidate("channel", "You cannot subscribe to your own channel.");
+    if (
+        this.subscriber &&
+        this.channel &&
+        this.subscriber.equals(this.channel)
+    ) {
+        this.invalidate(
+            "channel",
+            "You cannot subscribe to your own channel."
+        );
     }
 });
 

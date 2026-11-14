@@ -18,6 +18,12 @@ const userSchema = new Schema(
             trim: true,
         },
 
+        description: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+
         email: {
             type: String,
             unique: true,
