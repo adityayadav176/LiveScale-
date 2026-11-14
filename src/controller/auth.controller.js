@@ -650,7 +650,7 @@ const refreshAccessToken = asyncHandler(async(req, res) => {
 })
 
 const updateProfile = asyncHandler(async(req, res) => {
-    const {username, fullName} = req.body;
+    const {username, fullName, description} = req.body;
 
     if (!username && !fullName) {
         throw new ApiError(400, "At Least One Field Is Required To Be Changed");
@@ -662,6 +662,7 @@ const updateProfile = asyncHandler(async(req, res) => {
 
     if(username) updateFileds.username = username;
     if(fullName) updateFileds.fullName = fullName;
+    if(description) updateFileds.description = description;
 
     const user = User.findByIdAndUpdate(
         { userId },
