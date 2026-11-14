@@ -20,10 +20,11 @@ const watchHistorySchema = new Schema(
         },
 
         progress: {
-            type: Number,
-            default: 0,
-            min: 0,
-        },
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100
+},
 
         isComplete: {
             type: Boolean,
