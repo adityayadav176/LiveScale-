@@ -6,10 +6,11 @@ import { emailQueue } from "../queue/email.queue.js";
 import { cookieOption, generateAccessToken, generateRefreshToken } from "../utils/generateToken.js";
 import { Session } from "../model/Session.model.js";
 import { mongoose } from 'mongoose';
-import { checkS3ObjectExists, deleteFromS3, getFromS3, getS3ObjectMetaData, uploadToS3 } from '../service/s3.service.js';
+import { checkS3ObjectExists, deleteFromS3, getFromS3, uploadToS3 } from '../service/s3.service.js';
 import { deleteOtp, generateOtp, otpKey, storeOtp, verifyOtp } from "../service/otp.service.js";
 import crypto from "crypto";
 import redis from "../db/redis.js";
+import {UAParser} from "ua-parser-js";
 
 const generatePasswordResetToken = () => {
     return crypto.randomBytes(32).toString("hex");
@@ -91,13 +92,34 @@ const loginUser = asyncHandler(async (req, res) => {
     const accessToken = generateAccessToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
 
+    const parser = new UAParser(req.headers["user-agent"]);
+    const deviceInfo = parser.getResult();
+
+    // Create session
     await Session.create({
         user: user._id,
         refreshTokenHash: refreshToken,
-        userAgent: req.headers["user-agent"],
+
+        deviceName:
+            deviceInfo.device.model ||
+            deviceInfo.os.name ||
+            "Unknown Device",
+
+        browser: deviceInfo.browser.name || "Unknown",
+        browserVersion: deviceInfo.browser.version || null,
+
+        os: deviceInfo.os.name || "Unknown",
+        osVersion: deviceInfo.os.version || null,
+
+        deviceType: deviceInfo.device.type || "desktop",
+
         ipAddress: req.ip,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    })
+        lastActiveAt: new Date(),
+
+        expiresAt: new Date(
+            Date.now() + 30 * 24 * 60 * 60 * 1000
+        )
+    });
 
     return res.status(200)
     .cookie("accessToken", accessToken, {

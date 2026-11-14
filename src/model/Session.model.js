@@ -8,37 +8,69 @@ const sessionSchema = new Schema(
             type: Schema.Types.ObjectId,
             ref: "User",
             required: true,
-            index: true,
+            index: true
         },
 
         refreshTokenHash: {
             type: String,
             required: true,
-            select: false,
+            select: false
         },
 
-        userAgent: {
+        // Device information
+        deviceName: {
             type: String,
-            default: null,
+            default: "Unknown Device"
+        },
+
+        browser: {
+            type: String,
+            default: "Unknown"
+        },
+
+        browserVersion: {
+            type: String,
+            default: null
+        },
+
+        os: {
+            type: String,
+            default: "Unknown"
+        },
+
+        osVersion: {
+            type: String,
+            default: null
+        },
+
+        deviceType: {
+            type: String,
+            enum: ["desktop", "mobile", "tablet", "other"],
+            default: "other"
         },
 
         ipAddress: {
             type: String,
-            default: null,
+            default: null
+        },
+
+        lastActiveAt: {
+            type: Date,
+            default: Date.now
         },
 
         expiresAt: {
             type: Date,
-            required: true,
+            required: true
         },
 
         revokedAt: {
             type: Date,
-            default: null,
-        },
+            default: null
+        }
     },
     {
-        timestamps: true,
+        timestamps: true
     }
 );
 
