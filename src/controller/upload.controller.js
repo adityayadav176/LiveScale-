@@ -3,9 +3,10 @@ import { Upload } from "../model/upload.model.js"
 import { Video } from "../model/Video.model.js"
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js"
-import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, getMultipartUploadUrl } from "../service/s3.service.js";
+import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import videoQueue from './../queue/video.queue';
+import mongoose from "mongoose";
 
 // part size : 10 MB
 const PART_SIZE = 10 * 1024 * 1024;
@@ -456,11 +457,68 @@ const getVideoUploadStatus = asyncHandler(async (req, res) => {
 );
 });
 
+const uploadThumbnail = asyncHandler(async(req, res) => {
+    const {videoId} = req.params;
+    const {fileName, mimeType, fileSize} = req.body;
+
+    if(!videoId || !mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid Video Id");
+    }
+
+    if(!fileName || !mimeType || !fileSize) {
+        throw new ApiError("Thumbnail information is required");
+    }
+
+    if(typeof fileName !== "string" || !fileName.trim()) {
+        throw new ApiError(400, "Invalid thumbnail file name");
+    }
+
+    const allowedMimeTypes = [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    ]
+
+    if(!allowedMimeTypes.includes(mimeType)) {
+        throw new ApiError(400, "Unsupported thumbnail format");
+    } 
+
+    const MAX_THUMBNAIL_SIZE = 5 * 1024 * 1024;
+
+    if(!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_THUMBNAIL_SIZE) {
+        throw new ApiError(400, "Invalid Thumbnail Filesize");
+    }
+
+    const video = await Video.findOne({
+        _id: videoId,
+        owner: req.user._id
+    });
+
+    if(!video) {
+        throw new ApiError(404, "Video Not Found");
+    }
+
+    const {url, key} = await getThumbnailuploadUrl({
+        fileName,
+        contentType: mimeType,
+    })
+
+    return res.status(200).json(
+        new ApiResponse(200, {
+            videoId: video._id,
+            uploadUrl: url,
+            thumbnailKey: key,
+            expiresIn: 900
+        }, "Thumbnail upload URL generated successfully")
+    )
+})
+
 export {
     getVideoUploadStatus,
     completeMutipartUpload,
     abortVideoUpload,
     completeVideoUpload,
     initiateVideoUpload,
-    generateMutipartUploadURLs
+    generateMutipartUploadURLs,
+    uploadThumbnail
 }

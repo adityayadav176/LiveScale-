@@ -23,6 +23,23 @@ export const uploadToS3 = async({fileName, contentType}) => {
     return {url, key};
 }
 
+export const getThumbnailuploadUrl = async({fileName, contentType}) => {
+    if(!fileName || !contentType) {
+        throw new Error("Thumbnail information is required");
+    }
+
+    const key = `uploads/thumbnails/${crypto.randomUUID()}-${fileName}`;
+
+    const command = new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ContentType: contentType
+    });
+
+    const url = await getSignedUrl(s3, command, {expiresIn: 900});
+    return {url, key};
+}
+
 export const createMultipartUpload = async ({key, contentType}) => {
     if(!key || !contentType) {
         throw new Error("S3 key and content type are required");
