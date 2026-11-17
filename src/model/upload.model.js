@@ -69,6 +69,7 @@ const uploadSchema = new Schema(
                 "pending",
                 "uploading",
                 "completed",
+                "completing",
                 "failed",
                 "aborted",
             ],

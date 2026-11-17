@@ -52,13 +52,13 @@ export const getMultipartUploadUrl = async({key, UploadId, partNumber}) => {
         Bucket: bucket,
         Key: key,
         UploadId: UploadId,
-        PartNumber: PartNumber
+        PartNumber: partNumber
     })
 
     return await getSignedUrl(s3, command, {expiresIn: 900});
 };
 
-export const completeMutiparUpload = async({key, UploadId, parts}) => {
+export const completeMutipartUpload = async({key, UploadId, parts}) => {
     if(!key || !UploadId || !Array.isArray(parts) || parts.length === 0) {
         throw new Error("Multipart completion information is required");
     }

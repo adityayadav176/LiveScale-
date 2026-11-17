@@ -3,10 +3,9 @@ import { Upload } from "../model/upload.model.js"
 import { Video } from "../model/Video.model.js"
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js"
-import { abortMultipartUpload, checkS3ObjectExists, completeMutiparUpload, createMultipartUpload, getMultipartUploadUrl } from "../service/s3.service.js";
+import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, getMultipartUploadUrl } from "../service/s3.service.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import videoQueue from './../queue/video.queue';
-import { set } from "mongoose";
 
 // part size : 10 MB
 const PART_SIZE = 10 * 1024 * 1024;
@@ -32,6 +31,10 @@ const initiateVideoUpload = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid File Name");
     }
 
+    if (typeof description !== "string") {
+        throw new ApiError(400, "Invalid video description");
+    }
+
     if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_VIDEO_SIZE) {
         throw new ApiError(400, "Invalid video file Size");
     }
@@ -50,11 +53,15 @@ const initiateVideoUpload = asyncHandler(async (req, res) => {
 
     const safeFileName = fileName.replace(/\\/g, "/").split("/").pop().replace(/[^a-zA-Z0-9._-]/g, "_");
 
-    const s3Key = `uploads/videos:${randomUUID()}-${safeFileName}`;
+    if (!safeFileName) {
+        throw new ApiError(400, "Invalid file name");
+    }
+
+    const s3Key = `uploads/videos/${randomUUID()}-${safeFileName}`;
 
     const uploadId = await createMultipartUpload({
         key: s3Key,
-        contentType: contentType
+        contentType: mimeType
     });
 
     let video = null;
@@ -139,6 +146,10 @@ const generateMutipartUploadURLs = asyncHandler(async (req, res) => {
         user: req.user._id
     });
 
+    if (upload.expiresAt <= new Date()) {
+        throw new ApiError(410, "Upload session has expired");
+    }
+
     if (!upload) {
         throw new ApiError(404, "Upload session not found");
     }
@@ -148,7 +159,7 @@ const generateMutipartUploadURLs = asyncHandler(async (req, res) => {
     }
 
     for (const partNumber of partNumbers) {
-        if (Number.isInteger(partNumber) || partNumber < 1 || partNumber > upload.totalParts) {
+        if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > upload.totalParts) {
             throw new ApiError(400, "Invalid Part Number");
         }
     }
@@ -285,7 +296,7 @@ const completeVideoUpload = asyncHandler(async (req, res) => {
     }
 
     try {
-        await completeMutiparUpload({
+        await completeMutipartUpload({
             key: upload.s3Key,
             UploadId: upload.uploadId,
             parts,
@@ -297,6 +308,7 @@ const completeVideoUpload = asyncHandler(async (req, res) => {
             objectExists = await checkS3ObjectExists(upload.s3Key);
         } catch (error) {
             console.log("S3 completion verification failed", error);
+            throw new ApiError(503, "Unable to verify S3 upload completion");
         }
 
         if(!objectExists) {
@@ -310,17 +322,21 @@ const completeVideoUpload = asyncHandler(async (req, res) => {
         console.warn("S3 object exists after completion error continuing recovery");
     }
 
-    await Promise.all([
+  const [uploadResult, videoResult] = await Promise.all([
     Upload.updateOne(
-      { _id: upload._id, status: "completing" },
-      { $set: { status: "completed" } }
+        { _id: upload._id, status: "completing" },
+        { $set: { status: "completed" } }
     ),
 
     Video.updateOne(
-      { _id: video._id, status: "uploading" },
-      { $set: { status: "uploaded" } }
+        { _id: video._id, status: "uploading" },
+        { $set: { status: "uploaded" } }
     ),
-  ]);
+    ]);
+
+    if (uploadResult.matchedCount !== 1 || videoResult.matchedCount !== 1) {
+        throw new ApiError(500, "Failed to update upload completion status");
+    }
 
   await videoQueue.add(
     "process-video",
@@ -348,9 +364,103 @@ const completeVideoUpload = asyncHandler(async (req, res) => {
 })
 
 const abortVideoUpload = asyncHandler(async (req, res) => {
+    const { uploadId } = req.params;
 
+    if (!uploadId) {
+         throw new ApiError(400, "Upload ID is required");
+    }
+
+    const upload = await Upload.findOne({
+        uploadId,
+        user: req.user._id,
+    });
+
+    if (!upload) {
+        throw new ApiError(404, "Upload session not found");
+    }
+
+    if (upload.status === "aborted") {
+        return res.status(200).json(
+            new ApiResponse(200, null, "Upload already aborted")
+        );
+    }
+
+    if (upload.status === "completed") {
+        throw new ApiError(409, "Upload has already been completed");
+    }
+
+    if (upload.status === "completing") {
+        throw new ApiError(409, "Upload completion is in progress");
+    }
+
+    if (!["pending", "uploading"].includes(upload.status)) {
+        throw new ApiError(409, "Upload cannot be aborted in its current state");
+    }
+
+    await abortMultipartUpload({
+        key: upload.s3Key,
+        uploadId: upload.uploadId,
+    })
+
+    upload.status = "aborted";
+    await upload.save();
+
+    await Video.deleteOne({
+        _id: upload.video,
+        owner: req.user._id,
+        status: "uploading"
+    })
+
+    return res.status(200)
+    .json(
+        new ApiResponse(200, {
+            uploadId: upload.uploadId,
+            videoId: upload.video,
+            status:upload.status
+        },"Video upload aborted Successfully")
+    )
 })
 
 const getVideoUploadStatus = asyncHandler(async (req, res) => {
+    const { uploadId } = req.params;
 
-})
+    if (!uploadId) {
+        throw new ApiError(400, "Upload ID is required");
+    }
+
+    const upload = await Upload.findOne({
+        uploadId,
+        user: req.user._id,
+  }).select("-s3Key");
+
+    if (!upload) {
+        throw new ApiError(404, "Upload session not found");
+    }
+    
+    return res.status(200).json(
+    new ApiResponse(
+        200,
+        {
+            uploadId: upload.uploadId,
+            videoId: upload.video,
+            fileName: upload.fileName,
+            fileSize: upload.fileSize,
+            totalParts: upload.totalParts,
+            status: upload.status,
+            expiresAt: upload.expiresAt,
+            createdAt: upload.createdAt,
+            updatedAt: upload.updatedAt,
+        },
+        "Upload status fetched successfully"
+    )
+);
+});
+
+export {
+    getVideoUploadStatus,
+    completeMutipartUpload,
+    abortVideoUpload,
+    completeVideoUpload,
+    initiateVideoUpload,
+    generateMutipartUploadURLs
+}
