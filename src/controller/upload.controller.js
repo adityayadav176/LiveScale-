@@ -3,10 +3,11 @@ import { Upload } from "../model/upload.model.js"
 import { Video } from "../model/Video.model.js"
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js"
-import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, getFromS3, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
+import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, deleteFromS3, getFromS3, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import videoQueue from './../queue/video.queue';
 import mongoose from "mongoose";
+import { invalidateVideoCache } from "../service/cache.service.js";
 
 // part size : 10 MB
 const PART_SIZE = 10 * 1024 * 1024;
@@ -147,12 +148,12 @@ const generateMutipartUploadURLs = asyncHandler(async (req, res) => {
         user: req.user._id
     });
 
-    if (upload.expiresAt <= new Date()) {
-        throw new ApiError(410, "Upload session has expired");
+    if(!upload) {
+        throw new ApiError(404, "Upload Session Not Found")
     }
 
-    if (!upload) {
-        throw new ApiError(404, "Upload session not found");
+    if (upload.expiresAt <= new Date()) {
+        throw new ApiError(410, "Upload session has expired");
     }
 
     if (!["pending", "uploading"].includes(upload.status)) {
@@ -364,11 +365,12 @@ const completeVideoUpload = asyncHandler(async (req, res) => {
   );
 })
 
+
 const abortVideoUpload = asyncHandler(async (req, res) => {
     const { uploadId } = req.params;
 
     if (!uploadId) {
-         throw new ApiError(400, "Upload ID is required");
+        throw new ApiError(400, "Upload ID is required");
     }
 
     const upload = await Upload.findOne({
@@ -395,32 +397,74 @@ const abortVideoUpload = asyncHandler(async (req, res) => {
     }
 
     if (!["pending", "uploading"].includes(upload.status)) {
-        throw new ApiError(409, "Upload cannot be aborted in its current state");
+        throw new ApiError(
+            409,
+            "Upload cannot be aborted in its current state"
+        );
     }
 
-    await abortMultipartUpload({
-        key: upload.s3Key,
-        uploadId: upload.uploadId,
-    })
+    // Atomically acquire the abort lock.
+    const abortLock = await Upload.findOneAndUpdate(
+        {
+            _id: upload._id,
+            status: { $in: ["pending", "uploading"] },
+        },
+        {
+            $set: { status: "aborted" },
+        },
+        { new: true }
+    );
 
-    upload.status = "aborted";
-    await upload.save();
+    if (!abortLock) {
+        throw new ApiError(
+            409,
+            "Upload status changed. Please check upload status again"
+        );
+    }
 
-    await Video.deleteOne({
-        _id: upload.video,
-        owner: req.user._id,
-        status: "uploading"
-    })
-
-    return res.status(200)
-    .json(
-        new ApiResponse(200, {
+    try {
+        await abortMultipartUpload({
+            key: upload.s3Key,
             uploadId: upload.uploadId,
-            videoId: upload.video,
-            status:upload.status
-        },"Video upload aborted Successfully")
-    )
-})
+        });
+    } catch (error) {
+        // Keep the record for recovery if S3 abort fails.
+        await Upload.findByIdAndUpdate(upload._id, {
+            $set: { status: "failed" },
+        });
+
+        throw new ApiError(500, "Failed to abort multipart upload");
+    }
+
+    const deletedVideo = await Video.findOneAndDelete({
+    _id: upload.video,
+    owner: req.user._id,
+    status: "uploading",
+});
+
+if (deletedVideo) {
+    await invalidateVideoCache(deletedVideo);
+
+    if (deletedVideo.thumbnail) {
+        await deleteFromS3(deletedVideo.thumbnail);
+    }
+}
+
+    await Upload.deleteOne({ _id: upload._id });
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                uploadId: upload.uploadId,
+                videoId: upload.video,
+                status: "aborted",
+            },
+            "Video upload aborted successfully"
+        )
+    );
+});
+
 
 const getVideoUploadStatus = asyncHandler(async (req, res) => {
     const { uploadId } = req.params;
@@ -466,7 +510,7 @@ const generateThumbnailURL = asyncHandler(async(req, res) => {
     }
 
     if(!fileName || !mimeType || !fileSize) {
-        throw new ApiError("Thumbnail information is required");
+        throw new ApiError(400, "Thumbnail information is required");
     }
 
     if(typeof fileName !== "string" || !fileName.trim()) {
@@ -499,7 +543,7 @@ const generateThumbnailURL = asyncHandler(async(req, res) => {
     }
 
     const {url, key} = await getThumbnailuploadUrl({
-        fileName,
+        fileName: fileName.trim(),
         contentType: mimeType,
     })
 
@@ -542,6 +586,8 @@ const uploadThumbnail = asyncHandler(async(req, res) => {
 
     video.thumbnail = thumbnailKey,
     await video.save();
+
+    await invalidateVideoCache();
 
     return res.status(200).json(
         new ApiResponse(200, {

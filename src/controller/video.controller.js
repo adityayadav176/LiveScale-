@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 import { deleteCache, getCache, getCacheVersion, incrementCacheVersion, setCache } from "../service/cache.service.js";
 import { getFromS3 } from "../service/s3.service.js";
 import videoQueue from "../queue/video.queue.js";
-
+import { invalidateVideoCache } from "../service/cache.service.js";
 const publicVideoFileds = "title description owner thumbnail duration size format resolution views likesCount commentsCount publishedAt visibility status createdAt";
 
 const PUBLIC_VIDEO_TTL = 300;
@@ -148,7 +148,7 @@ const getMyVideos = asyncHandler(async (req, res) => {
     }
 
     await setCache(cacheKey, result, VIDEO_LIST_TTL);
-    const videosWithThumbnails = await attachThumbnailUrls(videos);
+    const videosWithThumbnails = await attachThumbnailURLs(videos);
      return res.status(200).json({
             success: true,
             source: "database",
@@ -168,7 +168,7 @@ const getVideoById = asyncHandler(async (req, res) => {
     const cached = await getCache(cacheKey);
 
     if (cached) {
-        const videoWithThumbnail = await attachThumbnailUrl(cached);
+        const videoWithThumbnail = await attachThumbnailURL(cached);
             return res.status(200).json({
                 success: true,
                 source: "cache",
@@ -191,7 +191,7 @@ const getVideoById = asyncHandler(async (req, res) => {
     }
 
     await setCache(cacheKey, video, PUBLIC_VIDEO_TTL);
-    const videoWithThumbnail = await attachThumbnailUrl(video);
+    const videoWithThumbnail = await attachThumbnailURL(video);
     return res.status(200).json({
             success: true,
             source: "database",
@@ -224,13 +224,6 @@ const getMyVideoById = asyncHandler(async (req, res) => {
     )
 })
 
-const invalidateVideoCache = async(video) => {
-    await Promise.all([
-        deleteCache(`video:public:${video._id}`),
-        incrementCacheVersion("videos:public:version"),
-        incrementCacheVersion(`videos:user:${video.owner}:version`)
-    ]);
-}
 
 const updateVideoMetaData = asyncHandler(async(req, res) => {
     const {title, description} = req.body;
@@ -429,5 +422,5 @@ export {
     getAllVideo,
     getMyVideos,
     publishVideo,
-    updateVideoMetaData
+    updateVideoMetaData,
 }

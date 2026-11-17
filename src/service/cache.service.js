@@ -68,3 +68,11 @@ export const getCacheVersion = async(key) => {
         return "0";
     }
 }
+
+export const invalidateVideoCache = async(video) => {
+    await Promise.all([
+        deleteCache(`video:public:${video._id}`),
+        incrementCacheVersion("videos:public:version"),
+        incrementCacheVersion(`videos:user:${video.owner}:version`)
+    ]);
+}
