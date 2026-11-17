@@ -109,13 +109,24 @@ const videoSchema = new Schema(
 
         status: {
             type: String,
-            enum: ["uploaded", "processing", "ready", "failed"],
-            default: "uploaded",
+            enum: ["uploading", "uploaded", "processing", "ready", "failed"],
+            default: "uploading",
         },
     },
     {
         timestamps: true,
     }
 );
+
+videoSchema.index({
+    visibility: 1,
+    status: 1,
+    publishedAt: -1,
+});
+
+videoSchema.index({
+    owner: 1,
+    createdAt: -1,
+});
 
 export const Video = mongoose.model("Video", videoSchema);

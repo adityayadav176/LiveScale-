@@ -85,6 +85,11 @@ const uploadSchema = new Schema(
     }
 );
 
+uploadSchema.index(
+    { expiresAt: 1 },
+    { expireAfterSeconds: 0 }
+);
+
 uploadSchema.index({ user: 1, status: 1 });
 
 export const Upload = model("Upload", uploadSchema);

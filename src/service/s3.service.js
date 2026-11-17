@@ -1,7 +1,7 @@
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import s3 from "../config/s3.js";
 import crypto from "crypto"
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, UploadPartCommand } from "@aws-sdk/client-s3";
 
 const bucket = process.env.AWS_BUCKET_NAME;
 
@@ -21,6 +21,74 @@ export const uploadToS3 = async({fileName, contentType}) => {
     const url = await getSignedUrl(s3, command, {expiresIn: 60}) // 1 minute
 
     return {url, key};
+}
+
+export const createMultipartUpload = async ({key, contentType}) => {
+    if(!key || !contentType) {
+        throw new Error("S3 key and content type are required");
+    }
+
+    const command = new CreateMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        ContentType: contentType
+    });
+
+    const response = await s3.send(command);
+
+    if(!response.UploadId) {
+        throw new Error("Failed to create S3 multipart upload!")
+    }
+
+    return response.UploadId;
+}
+
+export const getMultipartUploadUrl = async({key, UploadId, partNumber}) => {
+    if(!key || !UploadId || !Number.isInteger(partNumber) || partNumber < 1 || partNumber > 1000) {
+        throw new Error("Invalid mutipart upload information");
+    }
+
+    const command = new UploadPartCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: UploadId,
+        PartNumber: PartNumber
+    })
+
+    return await getSignedUrl(s3, command, {expiresIn: 900});
+};
+
+export const completeMutiparUpload = async({key, UploadId, parts}) => {
+    if(!key || !UploadId || !Array.isArray(parts) || parts.length === 0) {
+        throw new Error("Multipart completion information is required");
+    }
+
+    const sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+
+    const command = new CompleteMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: UploadId,
+        MultipartUpload: {
+            parts: sortedParts
+        },
+    });
+
+    return await s3.send(command);
+}
+
+export const abortMultipartUpload = async({key, uploadId}) => {
+    if(!key || !uploadId) {
+        throw new Error("S3 key and upload Id are required");
+    }
+
+    const command = new AbortMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+    });
+
+    return await s3.send(command);
 }
 
 export const getFromS3 = async(key) => {
