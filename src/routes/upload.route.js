@@ -1,15 +1,31 @@
+
 import { Router } from "express";
-import { verifyUser } from '../middleware/verifyUser.middleware.js';
-import { abortVideoUpload, completeVideoUpload, generateMutipartUploadURLs, getVideoUploadStatus, initiateVideoUpload, uploadThumbnail } from "../controller/upload.controller";
+import { verifyUser } from "../middleware/verifyUser.middleware.js";
+
+import {
+  abortVideoUpload,
+  completeVideoUpload,
+  generateMutipartUploadURLs,
+  generateThumbnailURL,
+  getThumbnail,
+  getVideoUploadStatus,
+  initiateVideoUpload,
+  uploadThumbnail,
+} from "../controller/upload.controller.js";
 
 const router = Router();
 
 router.use(verifyUser());
+
 router.post("/initiate", initiateVideoUpload);
 router.post("/:uploadId/parts", generateMutipartUploadURLs);
 router.post("/:uploadId/complete", completeVideoUpload);
 router.post("/:uploadId/abort", abortVideoUpload);
 router.get("/:uploadId/status", getVideoUploadStatus);
-router.post("/:videoId/thumbnail", uploadThumbnail);
+
+// Thumbnail routes
+router.post("/:videoId/thumbnail/url", generateThumbnailURL);
+router.post("/:videoId/thumbnail/upload", uploadThumbnail);
+router.get("/:videoId/thumbnail", getThumbnail);
 
 export default router;

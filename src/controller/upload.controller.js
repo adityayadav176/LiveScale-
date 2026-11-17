@@ -3,7 +3,7 @@ import { Upload } from "../model/upload.model.js"
 import { Video } from "../model/Video.model.js"
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js"
-import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
+import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, getFromS3, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import videoQueue from './../queue/video.queue';
 import mongoose from "mongoose";
@@ -457,7 +457,7 @@ const getVideoUploadStatus = asyncHandler(async (req, res) => {
 );
 });
 
-const uploadThumbnail = asyncHandler(async(req, res) => {
+const generateThumbnailURL = asyncHandler(async(req, res) => {
     const {videoId} = req.params;
     const {fileName, mimeType, fileSize} = req.body;
 
@@ -511,7 +511,66 @@ const uploadThumbnail = asyncHandler(async(req, res) => {
             expiresIn: 900
         }, "Thumbnail upload URL generated successfully")
     )
-})
+});
+
+const uploadThumbnail = asyncHandler(async(req, res) => {
+    const {videoId} = req.params;
+    const {thumbnailKey} = req.body;
+
+    if(!videoId || !mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid VideoId");
+    }
+
+    if(typeof thumbnailKey !== "string" || !thumbnailKey.startsWith("uploads/thumbnails/")) {
+        throw new ApiError(400, "Invalid Thumbnail Key");
+    }
+
+    const video = await Video.findOne({
+        _id: videoId,
+        owner: req.user._id
+    });
+
+    if(!video) {
+        throw new ApiError(404, "Video Not Found");
+    }
+
+    const exists = await checkS3ObjectExists(thumbnailKey);
+
+    if(!exists) {
+        throw new ApiError(404, "Thumbnail not found in S3");
+    }
+
+    video.thumbnail = thumbnailKey,
+    await video.save();
+
+    return res.status(200).json(
+        new ApiResponse(200, {
+            videoId: video._id,
+            thumbnail: video.thumbnail,
+        }, "Thumbnail Updated Successfully")
+    )
+});
+
+const getThumbnail = asyncHandler(async(req, res) => {
+    const {videoId} = req.params;
+
+    if(!videoId || !mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid VideoId");
+    }
+
+    const video = await Video.findById(videoId).select("thumbnail owner");
+
+    if(!video) {
+        throw new ApiError(400, "Video Not Found");
+    }
+
+    const thumbnailUrl = await getFromS3(video.thumbnail);
+
+    return res.status(200).
+    json(
+        new ApiResponse(200, {videoId: video._id, thumbnailUrl}, "Thumbnail fetched Successfully")
+    )
+});
 
 export {
     getVideoUploadStatus,
@@ -520,5 +579,7 @@ export {
     completeVideoUpload,
     initiateVideoUpload,
     generateMutipartUploadURLs,
-    uploadThumbnail
+    generateThumbnailURL,
+    uploadThumbnail,
+    getThumbnail,
 }

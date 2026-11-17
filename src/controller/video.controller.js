@@ -12,6 +12,28 @@ const publicVideoFileds = "title description owner thumbnail duration size forma
 const PUBLIC_VIDEO_TTL = 300;
 const VIDEO_LIST_TTL = 120;
 
+const attachThumbnailURLs = async (videos) => {
+    return Promise.all(
+        videos.map(async(video) => {
+            const {thumbnail, ...videoData} = video;
+
+            return {
+                ...videoData,
+                thumbnailUrl: thumbnail ? await getFromS3(thumbnail) : null
+            };
+        })
+    );
+};
+
+const attachThumbnailURL = async(video) => {
+    const {thumbnail, ...videoData} = video;
+
+    return {
+        ...videoData,
+        thumbnailUrl: thumbnail ? await getFromS3(thumbnail) : null
+    }
+}
+
 const getAllVideo = asyncHandler(async(req, res) => { 
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
@@ -21,10 +43,12 @@ const getAllVideo = asyncHandler(async(req, res) => {
     const cached = await getCache(cacheKey);
 
     if(cached) {
+        const videosWithThumbnails = await attachThumbnailURLs(cached.videos);
         return res.status(200).json({
             success: true,
             source: "cache",
-            ...cached
+            ...cached,
+            videos: videosWithThumbnails
         });
     }
 
@@ -57,11 +81,12 @@ const getAllVideo = asyncHandler(async(req, res) => {
     }
 
     await setCache(cacheKey, result, VIDEO_LIST_TTL);
-
+    const videosWithThumbnails = await attachThumbnailURLs(videos);
     return res.status(200).json({
         success: true,
         source: "database",
-        ...result
+        ...result,
+        videos: videosWithThumbnails
     });
 })
 
@@ -86,10 +111,12 @@ const getMyVideos = asyncHandler(async (req, res) => {
     const cached = await getCache(cacheKey);
 
     if(cached) {
+        const videosWithThumbnails = await attachThumbnailURLs(cached.videos);
         return res.status(200).json({
             success: true,
             source: "cache",
-            ...cached
+            ...cached,
+            videos: videosWithThumbnails
         })
     }
 
@@ -121,10 +148,12 @@ const getMyVideos = asyncHandler(async (req, res) => {
     }
 
     await setCache(cacheKey, result, VIDEO_LIST_TTL);
+    const videosWithThumbnails = await attachThumbnailUrls(videos);
      return res.status(200).json({
             success: true,
             source: "database",
-            ...result
+            ...result,
+            videos: videosWithThumbnails
         });
 })
 
@@ -139,10 +168,11 @@ const getVideoById = asyncHandler(async (req, res) => {
     const cached = await getCache(cacheKey);
 
     if (cached) {
+        const videoWithThumbnail = await attachThumbnailUrl(cached);
             return res.status(200).json({
                 success: true,
                 source: "cache",
-                video: cached
+                video: videoWithThumbnail
             })
     }
 
@@ -161,11 +191,11 @@ const getVideoById = asyncHandler(async (req, res) => {
     }
 
     await setCache(cacheKey, video, PUBLIC_VIDEO_TTL);
-
+    const videoWithThumbnail = await attachThumbnailUrl(video);
     return res.status(200).json({
             success: true,
             source: "database",
-            video
+            video: videoWithThumbnail
     })
 });
 
@@ -187,8 +217,10 @@ const getMyVideoById = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Video Not Found");
     }
 
+    const videoWithThumbnail = await attachThumbnailURL(video);
+
     return res.status(200).json(
-        new ApiResponse(200, video, "Video Fetched Successfully")
+        new ApiResponse(200, videoWithThumbnail, "Video Fetched Successfully")
     )
 })
 
