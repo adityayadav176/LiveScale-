@@ -4,13 +4,15 @@ import cors from "cors"
 import { errorMiddleware } from "./middleware/error.middleware.js";
 import morgan from "morgan";
 import helmet from "helmet";
-import authRouter from "./routes/auth.route.js"
-import likeRouter from "./routes/like.route.js"
-import commentRouter from "./routes/comment.route.js"
-import playlistRouter from "./routes/playlist.route.js"
-import subscriptionRouter from "./routes/subscription.route.js"
-import watchHistoryRouter from "./routes/watchHistory.route.js"
-import sessionRouter from "./routes/session.route.js"
+import authRouter from "./routes/auth.route.js";
+import likeRouter from "./routes/like.route.js";
+import commentRouter from "./routes/comment.route.js";
+import playlistRouter from "./routes/playlist.route.js";
+import subscriptionRouter from "./routes/subscription.route.js";
+import watchHistoryRouter from "./routes/watchHistory.route.js";
+import sessionRouter from "./routes/session.route.js";
+import uploadRouter from "./routes/upload.route.js";
+import videoRouter from "./routes/video.route.js";
 
 const app = express();
 
@@ -35,6 +37,8 @@ app.use("/api/v1/playlist", playlistRouter);
 app.use("/api/v1/subscription", subscriptionRouter);
 app.use("/api/v1/watchHistory", watchHistoryRouter);
 app.use("/api/v1/session", sessionRouter);
+app.use("/api/v1/videos/upload", uploadRouter)
+app.use("/api/v1/videos", videoRouter);
 
 app.use(errorMiddleware);
 

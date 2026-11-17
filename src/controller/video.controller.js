@@ -65,7 +65,7 @@ const getAllVideo = asyncHandler(async(req, res) => {
     });
 })
 
-const getMyVidoes = asyncHandler(async (req, res) => {
+const getMyVideos = asyncHandler(async (req, res) => {
     const userId = req.user._id;
     
     if(!userId) {
@@ -387,3 +387,15 @@ const getVideoPlaybackURL = asyncHandler(async (req, res) => {
         }, "Playback URL generated successfully")
     );
 });
+
+export {
+    getVideoPlaybackURL,
+    deleteVideo,
+    unPublishedVideo,
+    getMyVideoById,
+    getVideoById,
+    getAllVideo,
+    getMyVideos,
+    publishVideo,
+    updateVideoMetaData
+}
