@@ -5,7 +5,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js"
 import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, deleteFromS3, getFromS3, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import videoQueue from './../queue/video.queue';
+import videoQueue from './../queue/video.queue.js';
 import mongoose from "mongoose";
 import { invalidateVideoCache } from "../service/cache.service.js";
 
@@ -202,7 +202,6 @@ const completeVideoUpload = asyncHandler(async (req, res) => {
     if (!uploadId || !Array.isArray(parts) || parts.length === 0) {
         throw new ApiError(400, "Upload completion information is required");
     }
-
     const upload = await Upload.findOne({
         uploadId,
         user: req.user._id

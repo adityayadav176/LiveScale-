@@ -15,7 +15,7 @@ import {
 
 const router = Router();
 
-router.use(verifyUser());
+router.use(verifyUser);
 
 router.post("/initiate", initiateVideoUpload);
 router.post("/:uploadId/parts", generateMutipartUploadURLs);

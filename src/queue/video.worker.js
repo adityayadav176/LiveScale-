@@ -1,7 +1,11 @@
 import { Worker } from "bullmq";
-import Redis from "ioredis";
-import redis from "../db/redis";
-import { deleteFromS3 } from "../service/s3.service";
+import redis from "../db/redis.js";
+import { deleteFromS3, downloadFromS3, uploadFileToS3, uploadHLSDirectoryToS3 } from "../service/s3.service.js";
+import { generateHLS, generatePreviewSprites } from "../service/ffmpeg.service.js";
+import fs from "fs/promises"
+import os from "os";
+import path from "path";
+import crypto from "crypto";
 
 const videoWorker = new Worker("video-queue", 
     async (job) => {
@@ -11,19 +15,77 @@ const videoWorker = new Worker("video-queue",
         switch(job.name) {
             case "process-video" : {
                 const {videoId, userId, s3Key} = job.data;
-                console.log("VideoID:", videoId);
-                console.log("UserId:", userId);
-                console.log("S3KEY", s3Key);
-                  // TODO:
-                // 1. Download original video from S3
-                // 2. Process video using FFmpeg
-                // 3. Upload processed video to S3
-                // 4. Update MongoDB video status
-                return {
-                    success: true,
-                    videoId,
-                    message: "Video Processed Successfully"
-                };
+                if (!videoId || !userId || !s3Key) {
+    throw new Error("Video ID, User ID and S3 key are required");
+}
+                 const jobDir = path.join(os.tmpdir(), `livescale-${videoId}-${crypto.randomUUID()}`);
+
+                 const inputPath = path.join(jobDir, "original.mp4");
+                 const hlsDir = path.join(jobDir, "hls");
+                 const previewDir = path.join(jobDir, "preview");
+
+                 try {
+                    await fs.mkdir(jobDir, {recursive : true});
+                    // Download original video from S3
+
+                    await downloadFromS3({
+                        key: s3Key,
+                        destination: inputPath
+                    })
+                     // Generate HLS resolutions
+
+                     await generateHLS({
+                        inputPath,
+                        outputDir: hlsDir
+                     })
+                    // Generate timestamp previews
+
+                    await generatePreviewSprites({
+                        inputPath,
+                        outputDir: previewDir
+                    })
+
+                    const previewImageKey = `videos/${videoId}/previews/preview.jpg`;
+                    const previewVttKey = `videos/${videoId}/previews/preview.vtt`;
+
+                    await uploadFileToS3({
+                        filePath: path.join(previewDir, "preview.jpg"),
+                        key: previewImageKey,
+                        contentType: "image/jpeg"
+                    })
+
+                    await uploadFileToS3({
+                        filePath: path.join(previewDir, "preview.vtt"),
+                        key: previewVttKey,
+                        contentType: "text/vtt"
+                    })
+
+                    // Upload HLS files
+
+                    const hlsResult = await uploadHLSDirectoryToS3({
+                        outputDir: hlsDir,
+                        videoId
+                    })
+
+                    return {
+                        success: true,
+                        videoId,
+                        hlsResult,
+                        preview: {
+                            imageKey: previewImageKey,
+                            vttKey: previewVttKey
+                        }
+                    }
+                } catch (error) {
+    console.error("Video processing failed:", error);
+
+    throw error;
+} finally {
+    await fs.rm(jobDir, {
+        recursive: true,
+        force: true
+    });
+}
             }
             case "delete-video-files": {
                 const {s3Keys} = job.data;

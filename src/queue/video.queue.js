@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import redis from "../db/redis";
+import redis from "../db/redis.js";
 
 const videoQueue = new Queue("video-queue", {
     connection: redis,

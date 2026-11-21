@@ -1,6 +1,8 @@
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import s3 from "../config/s3.js";
 import crypto from "crypto"
+import {createReadStream, createWriteStream} from "fs"
+import {pipeline} from "stream/promises"
 import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, UploadPartCommand } from "@aws-sdk/client-s3";
 
 const bucket = process.env.AWS_BUCKET_NAME;
@@ -176,3 +178,106 @@ export const getS3ObjectMetaData = async(key) => {
         etag: response.ETag
     }
 }
+
+export const downloadFromS3 = async({key, destination}) => {
+    if(!key || !destination) {
+        throw new Error("S2 key and destination are required");
+    }
+
+    const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: key
+    })
+    
+    const response = await s3.send(command);
+
+    if(!response.Body) {
+        throw new Error("S2 object body is empty");
+    }
+
+    await pipeline(
+        response.Body,
+        createWriteStream(destination)
+    );
+
+    return {
+        destination,
+        ContentType: response.ContentType,
+        contentLength: response.ContentLength 
+    }
+}
+
+export const uploadFileToS3 = async({filePath, key, contentType}) => {
+    if(!filePath || !key || !contentType) {
+        throw new Error("File Path S3 key content type are required");
+    }
+
+    const command = new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: createReadStream(filePath),
+        ContentType: contentType
+    })
+
+     await s3.send(command);
+
+     return {
+        key,
+        message: "File uploaded successfully"
+    };
+}
+
+export const uploadHLSDirectoryToS3 = async ({ outputDir, videoId }) => {
+    if (!outputDir || !videoId) {
+        throw new Error("Output directory and video ID are required");
+    }
+
+    const uploadedFiles = [];
+
+    const uploadDirectory = async (directory, prefix = "") => {
+        const entries = await fs.readdir(directory, {
+            withFileTypes: true
+        });
+
+        for (const entry of entries) {
+            const fullPath = path.join(directory, entry.name);
+            const relativePath = path.posix.join(prefix, entry.name);
+
+            if (entry.isDirectory()) {
+                await uploadDirectory(fullPath, relativePath);
+                continue;
+            }
+
+            const extension = path.extname(entry.name).toLowerCase();
+
+            const contentTypes = {
+                ".m3u8": "application/vnd.apple.mpegurl",
+                ".ts": "video/mp2t",
+                ".jpg": "image/jpeg",
+                ".vtt": "text/vtt"
+            };
+
+            const contentType = contentTypes[extension];
+
+            if (!contentType) continue;
+
+            const key = `videos/${videoId}/hls/${relativePath}`;
+
+            await uploadFileToS3({
+                filePath: fullPath,
+                key,
+                contentType
+            });
+
+            uploadedFiles.push(key);
+            console.log("Uploaded:", key);
+        }
+    };
+
+    await uploadDirectory(outputDir);
+
+    return {
+        uploadedCount: uploadedFiles.length,
+        uploadedFiles
+    };
+};
