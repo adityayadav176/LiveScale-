@@ -122,11 +122,13 @@ videoSchema.index({
     visibility: 1,
     status: 1,
     publishedAt: -1,
+    _id: -1
 });
 
 videoSchema.index({
     owner: 1,
     createdAt: -1,
+    _id: -1
 });
 
 export const Video = mongoose.model("Video", videoSchema);

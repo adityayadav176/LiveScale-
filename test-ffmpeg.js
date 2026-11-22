@@ -10,21 +10,21 @@ const test = async () => {
 };
 
 
-// const result = await generatePreviewSprites({
-//   inputPath: "./sample.mp4",
-//   outputDir: "./preview-output",
-//   interval: 5,
-//   columns: 5
-// });
-
-import { generateHLS } from "./src/service/ffmpeg.service.js";
-
-const result = await generateHLS({
+const result = await generatePreviewSprites({
   inputPath: "./sample.mp4",
-  outputDir: "./hls-output"
+  outputDir: "./preview-output",
+  interval: 5,
+  columns: 5
 });
 
-// console.log(result);
+// import { generateHLS } from "./src/service/ffmpeg.service.js";
+
+// // const result = await generateHLS({
+// //   inputPath: "./sample.mp4",
+// //   outputDir: "./hls-output"
+// // });
+
+// // // console.log(result);
 
 console.log(result);
 

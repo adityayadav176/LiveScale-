@@ -40,6 +40,13 @@ app.use("/api/v1/session", sessionRouter);
 app.use("/api/v1/videos/upload", uploadRouter)
 app.use("/api/v1/videos", videoRouter);
 
+app.get("/api/v1/hello", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Hello World"
+  });
+});
+
 app.use(errorMiddleware);
 
 export {app};

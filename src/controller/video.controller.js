@@ -12,43 +12,56 @@ const publicVideoFileds = "title description owner thumbnail duration size forma
 const PUBLIC_VIDEO_TTL = 300;
 const VIDEO_LIST_TTL = 120;
 
-const attachThumbnailURLs = async (videos) => {
-    return Promise.all(
-        videos.map(async(video) => {
-            const {thumbnail, ...videoData} = video;
-
-            return {
-                ...videoData,
-                thumbnailUrl: thumbnail ? await getFromS3(thumbnail) : null
-            };
+const encodeCursor = (video) => {
+    return Buffer.from(
+        JSON.stringify({
+            publishedAt: video.publishedAt,
+            id: video._id.toString()
         })
-    );
+    ).toString("base64url");
 };
 
-const attachThumbnailURL = async(video) => {
-    const {thumbnail, ...videoData} = video;
+const decodeCursor = (cursor) => {
+    try {
+        const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
 
-    return {
-        ...videoData,
-        thumbnailUrl: thumbnail ? await getFromS3(thumbnail) : null
+        const publishedAt = new Date(decoded.publishedAt);
+
+        if (!/^[0-9a-fA-F]{24}$/.test(decoded.id) ||!Number.isFinite(publishedAt.getTime())) {
+            return null;
+        }
+
+        return {
+            publishedAt,
+            id: decoded.id
+        };
+
+    } catch (error) {
+        return null;
     }
-}
+};
+
 
 const getAllVideo = asyncHandler(async(req, res) => { 
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
-    const skip = (page - 1) * limit;
-    const version = await getCacheVersion("videos:public:version");
-    const cacheKey = `videos:public:v${version}:page:${page}:limit:${limit}`;
+    const cursor = req.query.cursor || null;
+    const cursorData = cursor ? decodeCursor(cursor) : null;
+
+
+    if(cursor && !cursorData) {
+        throw new ApiError(400, "Invalid cursor");
+    }
+
+     const version = await getCacheVersion("videos:public:version");
+     const cacheKey =
+    `videos:public:v${version}:cursor:${cursor || "first"}:limit:${limit}`;
     const cached = await getCache(cacheKey);
 
     if(cached) {
-        const videosWithThumbnails = await attachThumbnailURLs(cached.videos);
         return res.status(200).json({
             success: true,
             source: "cache",
-            ...cached,
-            videos: videosWithThumbnails
+            ...cached
         });
     }
 
@@ -57,36 +70,55 @@ const getAllVideo = asyncHandler(async(req, res) => {
         visibility: "public"
     };
 
-    const [videos, totalVideos] = await Promise.all([
-        Video.find(filter)
-        .select(publicVideoFileds)
-        .sort({publishedAt: -1, _id: -1})
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+    const queryFilter = cursorData ? {
+    ...filter,
+    $or: [
+        {
+            publishedAt: {
+                $lt: cursorData.publishedAt
+            }
+        },
+        {
+            publishedAt: cursorData.publishedAt,
+            _id: {
+                $lt: cursorData.id
+            }
+        }
+    ]
+} : filter;
 
-        Video.countDocuments(filter)
-    ]);
+    const videos = await Video.find(queryFilter)
+    .select("title owner thumbnail processedKey duration views publishedAt")
+    .sort({publishedAt: -1, _id: -1})
+    .limit(limit + 1)
+    .lean();
+
+    const hasMore = videos.length > limit;
+    if(hasMore) videos.pop();
+
+    const lastVideo = videos[videos.length - 1];
+
+    const nextCursor = hasMore && lastVideo ? encodeCursor(lastVideo) : null;
+
+    const videoWithThumbnail = videos.map(video => ({
+        ...video,
+        thumbnail: video.thumbnail ? `${process.env.CLOUDFRONT_DOMAIN}/${video.thumbnail}` : null
+    }))
 
     const result = {
-        videos,
+        videos: videoWithThumbnail,
         pagination: {
-            limit: limit,
-            currentPage: page,
-            totalPages: Math.ceil(totalVideos / limit),
-            totalVideos,
-            hasNextPage: page < Math.ceil(totalVideos / limit),
-            hasPrevPage: page > 1
+            limit,
+            hasMore,
+            nextCursor
         }
     }
 
     await setCache(cacheKey, result, VIDEO_LIST_TTL);
-    const videosWithThumbnails = await attachThumbnailURLs(videos);
     return res.status(200).json({
         success: true,
         source: "database",
         ...result,
-        videos: videosWithThumbnails
     });
 })
 
@@ -101,59 +133,95 @@ const getMyVideos = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid UserId");
     }
 
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
-    const skip = (page - 1) * limit;
 
-    const version = await getCacheVersion(`videos:user:${userId}:version`);
-    const cacheKey = `videos:user:${userId}:v${version}:page:${page}:limit:${limit}`;
+     const cursor = req.query.cursor || null;
+     const cursorData = cursor ? decodeCursor(cursor) : null;
+
+     if (cursor && !cursorData) {
+        throw new ApiError(400, "Invalid cursor");
+    }
+
+
+        const version = await getCacheVersion(
+        `videos:user:${userId}:version`
+    );
+     const cacheKey =
+        `videos:user:${userId}:v${version}:cursor:${cursor || "first"}:limit:${limit}`;
+
 
     const cached = await getCache(cacheKey);
 
     if(cached) {
-        const videosWithThumbnails = await attachThumbnailURLs(cached.videos);
         return res.status(200).json({
             success: true,
             source: "cache",
-            ...cached,
-            videos: videosWithThumbnails
+            ...cached
         })
     }
 
     const filter = {owner: userId};
 
-    const [videos, totalVideos] = await Promise.all([
-        Video.find(filter)
-        .select("-originalKey -processedKey -previewSpriteKeys -previewVttKey")
-        .sort({createdAt: -1, _id: -1})
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+     const queryFilter = cursorData
+    ? {
+        ...filter,
+        publishedAt: { $ne: null },
+        $or: [
+            { publishedAt: { $lt: cursorData.publishedAt } },
+            {
+                publishedAt: cursorData.publishedAt,
+                _id: { $lt: cursorData.id }
+            }
+        ]
+    }
+    : {
+        ...filter,
+        publishedAt: { $ne: null }
+    };
 
-        Video.countDocuments(filter)
-    ]);
+   const videos = await Video.find(queryFilter)
+    .select("-originalKey -processedKey -previewSpriteKeys -previewVttKey")
+    .sort({ publishedAt: -1, _id: -1 })
+    .limit(limit + 1)
+    .lean();
 
-    const totalPages = Math.ceil(totalVideos / limit);
+      const hasMore = videos.length > limit;
+
+
+    if (hasMore) {
+        videos.pop();
+    }
+
+    const lastVideo = videos[videos.length - 1];
+
+     const nextCursor =
+        hasMore && lastVideo
+            ? encodeCursor(lastVideo)
+            : null;
+    
+    const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN?.replace(/\/$/, "");
+
+    const videosWithThumbnails = videos.map(video => ({
+        ...video,
+        thumbnail: video.thumbnail && cloudFrontDomain
+            ? `${cloudFrontDomain}/${video.thumbnail}`
+            : null
+    }));
 
     const result = {
-        videos,
-                pagination: {
-                    currentPage: page,
-                    totalPages,
-                    totalVideos,
-                    limit,
-                    hasNextPage: page < totalPages,
-                    hasPrevPage: page > 1
-                }
+        videos: videosWithThumbnails,
+                        pagination: {
+            limit,
+            hasMore,
+            nextCursor
+        }
     }
 
     await setCache(cacheKey, result, VIDEO_LIST_TTL);
-    const videosWithThumbnails = await attachThumbnailURLs(videos);
      return res.status(200).json({
             success: true,
             source: "database",
             ...result,
-            videos: videosWithThumbnails
         });
 })
 
@@ -168,11 +236,10 @@ const getVideoById = asyncHandler(async (req, res) => {
     const cached = await getCache(cacheKey);
 
     if (cached) {
-        const videoWithThumbnail = await attachThumbnailURL(cached);
             return res.status(200).json({
                 success: true,
                 source: "cache",
-                video: videoWithThumbnail
+                video: cached
             })
     }
 
@@ -183,15 +250,18 @@ const getVideoById = asyncHandler(async (req, res) => {
     }).select(publicVideoFileds)
     .lean();
 
-    if (!video) {
-            return res.status(404).json({
-                success: false,
-                message: "Video not found"
-            });
+     if (!video) {
+        throw new ApiError(404, "Video not found");
     }
 
-    await setCache(cacheKey, video, PUBLIC_VIDEO_TTL);
-    const videoWithThumbnail = await attachThumbnailURL(video);
+     const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN?.replace(/\/$/, "");
+
+      const videoWithThumbnail = {
+        ...video,
+        thumbnail: video.thumbnail && cloudFrontDomain ? `${cloudFrontDomain}/${video.thumbnail}` : null
+    };
+
+    await setCache(cacheKey, videoWithThumbnail, PUBLIC_VIDEO_TTL);
     return res.status(200).json({
             success: true,
             source: "database",
@@ -206,6 +276,25 @@ const getMyVideoById = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid VideoId");
     }
 
+      const version = await getCacheVersion(
+        `video:user:${userId}:${videoId}:version`
+    );
+
+    const cacheKey =
+        `video:user:${userId}:${videoId}:v${version}`;
+
+     const cached = await getCache(cacheKey);
+
+     if (cached) {
+        return res.status(200).json(
+            new ApiResponse(
+                200,
+                cached,
+                "Video Fetched Successfully"
+            )
+        );
+    }
+
     const userId = req.user._id;
 
     const video = await Video.findOne({
@@ -217,50 +306,60 @@ const getMyVideoById = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Video Not Found");
     }
 
-    const videoWithThumbnail = await attachThumbnailURL(video);
+    const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN?.replace(/\/$/, "");
+
+    const videoWithThumbnail = {
+        ...video,
+        thumbnail: video.thumbnail && cloudFrontDomain ? `${cloudFrontDomain}/${video.thumbnail}` : null
+    };
+
+      await setCache(
+        cacheKey,
+        videoWithThumbnail,
+        PUBLIC_VIDEO_TTL
+    );
 
     return res.status(200).json(
         new ApiResponse(200, videoWithThumbnail, "Video Fetched Successfully")
     )
 })
 
-
-const updateVideoMetaData = asyncHandler(async(req, res) => {
-    const {title, description} = req.body;
+const updateVideoMetaData = asyncHandler(async (req, res) => {
+    const { title, description } = req.body;
     const userId = req.user._id;
-    const {videoId} = req.params;
+    const { videoId } = req.params;
+
     if (title === undefined && description === undefined) {
         throw new ApiError(400, "Provide at least one field to update");
     }
-    if(!videoId || !mongoose.isValidObjectId(videoId)) {
-        throw new ApiError(404, "Invalid VideoId");
+
+    if (!videoId || !mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid VideoId");
     }
+
     const updateData = {};
 
-    if(title !== undefined) {
-        if(typeof title !== "string" || !title.trim()) {
+    if (title !== undefined) {
+        if (typeof title !== "string" || !title.trim()) {
             throw new ApiError(400, "Title Cannot Be Empty");
         }
         updateData.title = title.trim();
     }
-    if(description !== undefined) {
-        if(typeof description !== "string" || !description.trim()) {
+
+    if (description !== undefined) {
+        if (typeof description !== "string" || !description.trim()) {
             throw new ApiError(400, "Description Cannot Be Empty");
         }
         updateData.description = description.trim();
     }
 
-    if(Object.keys(updateData).length === 0) {
-        throw new ApiError(400, "Provide title or description to update");
-    }
-
     const video = await Video.findOneAndUpdate(
-        {_id: videoId, owner: userId},
-        {$set: updateData},
-        {new: true, runValidators: true}
-    )
+        { _id: videoId, owner: userId },
+        { $set: updateData },
+        { new: true, runValidators: true }
+    );
 
-    if(!video) {
+    if (!video) {
         throw new ApiError(404, "Video not found");
     }
 
@@ -272,64 +371,84 @@ const updateVideoMetaData = asyncHandler(async(req, res) => {
 });
 
 const publishVideo = asyncHandler(async (req, res) => {
-    const {videoId} = req.params;
+    const { videoId } = req.params;
     const userId = req.user._id;
 
-    if(!videoId || !mongoose.isValidObjectId(videoId)) {
-        throw new ApiError(400, "Invalid VideoID");
+    if (!mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid VideoId");
     }
 
-    const video = await Video.findOne({
-        _id: videoId,
-        owner: userId,
-    });
+    const video = await Video.findOneAndUpdate(
+        {
+            _id: videoId,
+            owner: userId,
+            status: "ready"
+        },
+        {
+            $set: {
+                visibility: "public",
+                publishedAt: new Date()
+            }
+        },
+        {
+            new: true,
+            runValidators: true
+        }
+    );
 
-    if(!video) {
-        throw new ApiError(404, "Video Not Found");
+    if (!video) {
+        throw new ApiError(
+            404,
+            "Video not found or not ready for publishing"
+        );
     }
 
-    if(video.status !== "ready") {
-        throw new ApiError(400, "Only processed videos can be published");
-    }
-
-    video.visibility = "public";
-    video.publishedAt = new Date();
-
-    await video.save();
     await invalidateVideoCache(video);
 
     return res.status(200).json(
-        new ApiResponse(200, video, "Video Publised Successfully")
-    )
-})
+        new ApiResponse(200, video, "Video Published Successfully")
+    );
+});
 
-const unPublishedVideo = asyncHandler(async(req, res) => {
-    const {videoId} = req.params;
+const unPublishedVideo = asyncHandler(async (req, res) => {
+    const { videoId } = req.params;
     const userId = req.user._id;
 
-    if(!videoId || !mongoose.isValidObjectId(videoId)) {
-        throw new ApiError(400, "Invalid VideoID");
+    if (!mongoose.isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid VideoId");
     }
 
-    const video = await Video.findOne({
-        _id: videoId,
-        owner: userId,
-    });
+    const video = await Video.findOneAndUpdate(
+        {
+            _id: videoId,
+            owner: userId
+        },
+        {
+            $set: {
+                visibility: "private",
+                publishedAt: null
+            }
+        },
+        {
+            new: true,
+            runValidators: true
+        }
+    );
 
-    if(!video) {
+    if (!video) {
         throw new ApiError(404, "Video Not Found");
     }
 
-    video.visibility = "private";
-    video.publishedAt = null;
-
-    await video.save();
     await invalidateVideoCache(video);
 
     return res.status(200).json(
-        new ApiResponse(200, video, "Video UnPublised Successfully")
-    )
-})
+        new ApiResponse(
+            200,
+            video,
+            "Video Unpublished Successfully"
+        )
+    );
+});
 
 const deleteVideo = asyncHandler(async(req, res) => {
     const {videoId} = req.params;
@@ -356,11 +475,13 @@ const deleteVideo = asyncHandler(async(req, res) => {
             video.thumbnail
     ].filter(Boolean);
     await video.deleteOne();
+
+    await invalidateVideoCache(video);
+
     await videoQueue.add(
         "delete-video-files",
         {s3Keys},
     )
-    await invalidateVideoCache(video);
 
     return res.status(200).json(
         new ApiResponse(200, video, "Video deleted successfully. S3 cleanup has been scheduled.")
@@ -369,31 +490,27 @@ const deleteVideo = asyncHandler(async(req, res) => {
 
 const getVideoPlaybackURL = asyncHandler(async (req, res) => {
     const { videoId } = req.params;
-
-    // Optional authentication: guest users are allowed.
     const userId = req.user?._id;
 
     if (!mongoose.isValidObjectId(videoId)) {
         throw new ApiError(400, "Invalid VideoId");
     }
 
-    const video = await Video.findById(videoId);
+    const video = await Video.findById(videoId)
+        .select("owner status visibility processedKey")
+        .lean();
 
     if (!video || video.status !== "ready") {
         throw new ApiError(404, "Video is not available for playback");
     }
 
     const isOwner =
-        userId && video.owner.equals(userId);
-
-    const isPublic =
-        video.visibility === "public";
-
-    const isUnlisted =
-        video.visibility === "unlisted";
+        userId && video.owner.toString() === userId.toString();
 
     const canWatch =
-        isPublic || isUnlisted || isOwner;
+        video.visibility === "public" ||
+        video.visibility === "unlisted" ||
+        isOwner;
 
     if (!canWatch) {
         throw new ApiError(403, "You are not authorized to watch this video");
@@ -406,10 +523,14 @@ const getVideoPlaybackURL = asyncHandler(async (req, res) => {
     const playbackURL = await getFromS3(video.processedKey);
 
     return res.status(200).json(
-        new ApiResponse(200, {
-            playbackURL,
-            expiresIn: 60
-        }, "Playback URL generated successfully")
+        new ApiResponse(
+            200,
+            {
+                playbackURL,
+                expiresIn: 60
+            },
+            "Playback URL generated successfully"
+        )
     );
 });
 
