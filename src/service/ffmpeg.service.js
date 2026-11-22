@@ -100,24 +100,30 @@ export const generatePreviewSprites = async({inputPath, outputDir, interval = 5,
     const frameCount = Math.ceil(duration / interval);
     const rows = Math.ceil(frameCount / columns);
 
-    const spritePath = path.join(outputDir, "preview.png");
+    const spritePath = path.join(outputDir, "preview.jpg");
     const vttPath = path.join(outputDir, "preview.vtt");
 
-    const filter = [
-        `fps=1/${interval}`,
-    "scale=720:405:force_original_aspect_ratio=decrease",
+   const filter = [
+    `fps=1/${interval}`,
+    "scale=720:405:force_original_aspect_ratio=decrease:force_divisible_by=2",
     "pad=720:405:(ow-iw)/2:(oh-ih)/2",
     `tile=${columns}x${rows}:padding=0:margin=0`
-    ].join(",");
+].join(",");
 
     await new Promise((resolve, reject) => {
-       FFmpeg(inputPath)
-      .outputOptions(["-vf", filter, "-frames:v 1"])
-      .output(spritePath)
-      .on("end", resolve)
-      .on("error", reject)
-      .run();
-    })
+    FFmpeg(inputPath)
+        .outputOptions(["-vf", filter, "-frames:v 1"])
+        .output(spritePath)
+        .on("start", commandLine => {
+            console.log("Preview FFmpeg command:", commandLine);
+        })
+        .on("stderr", line => {
+            console.log("Preview FFmpeg:", line);
+        })
+        .on("end", resolve)
+        .on("error", reject)
+        .run();
+});
 
     let vtt = "WEBVTT\n\n";
 

@@ -1,4 +1,4 @@
-import { transporter } from "./nodemailer"
+import { transporter } from "./nodemailer.js"
 
 const emailService = async(to, subject, html) => {
     try {

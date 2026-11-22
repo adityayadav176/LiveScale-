@@ -1,8 +1,11 @@
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import s3 from "../config/s3.js";
-import crypto from "crypto"
-import {createReadStream, createWriteStream} from "fs"
-import {pipeline} from "stream/promises"
+import crypto from "crypto";
+import {createReadStream, createWriteStream} from "fs";
+import {pipeline} from "stream/promises";
+import { stat } from "fs/promises";
+import path from "node:path";
+import fs from "node:fs/promises";
 import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, UploadPartCommand } from "@aws-sdk/client-s3";
 
 const bucket = process.env.AWS_BUCKET_NAME;
@@ -81,6 +84,10 @@ export const getMultipartUploadUrl = async({key, UploadId, partNumber}) => {
 export const completeMutipartUpload = async ({ key, UploadId, parts }) => {
     if (!key || !UploadId || !Array.isArray(parts) || parts.length === 0) {
         throw new Error("Multipart completion information is required");
+    }
+
+    if (parts.some(p => !p.partNumber || !p.ETag)) {
+        throw new Error("Invalid multipart part information");
     }
 
     const sortedParts = [...parts]
@@ -214,25 +221,28 @@ export const downloadFromS3 = async({key, destination}) => {
     }
 }
 
-export const uploadFileToS3 = async({filePath, key, contentType}) => {
-    if(!filePath || !key || !contentType) {
+export const uploadFileToS3 = async ({ filePath, key, contentType }) => {
+    if (!filePath || !key || !contentType) {
         throw new Error("File Path S3 key content type are required");
     }
+
+    const fileStats = await stat(filePath);
 
     const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,
         Body: createReadStream(filePath),
+        ContentLength: fileStats.size,
         ContentType: contentType
-    })
+    });
 
-     await s3.send(command);
+    await s3.send(command);
 
-     return {
+    return {
         key,
         message: "File uploaded successfully"
     };
-}
+};
 
 export const uploadHLSDirectoryToS3 = async ({ outputDir, videoId }) => {
     if (!outputDir || !videoId) {
