@@ -79,72 +79,86 @@ export const generateThumbnail = ({
   });
 };
 
-export const generatePreviewSprites = async({inputPath, outputDir, interval = 5, columns = 5}) => {
-    if(!inputPath || !outputDir) {
-        throw new Error("Input and Output paths are required");
-    }
 
-    if(interval <= 0 || columns <= 0) {
-        throw new Error("Interval and Columns must be positive");
-    }
+export const generatePreviewSprites = async ({
+  inputPath,
+  outputDir,
+  interval = 5,
+  columns = 5
+}) => {
+  if (!inputPath || !outputDir) {
+    throw new Error("Input and Output paths are required");
+  }
 
-    const metaData = await getVideoMetadata(inputPath);
-    const duration = Number(metaData.duration);
+  if (interval <= 0 || columns <= 0) {
+    throw new Error("Interval and Columns must be positive");
+  }
 
-    if(!Number.isFinite(duration) || duration <= 0) {
-        throw new Error("Invalid video duration");
-    }
+  const metaData = await getVideoMetadata(inputPath);
+  const duration = Number(metaData.duration);
 
-    await fs.mkdir(outputDir, {recursive: true});
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error("Invalid video duration");
+  }
 
-    const frameCount = Math.ceil(duration / interval);
-    const rows = Math.ceil(frameCount / columns);
+  await fs.mkdir(outputDir, { recursive: true });
 
-    const spritePath = path.join(outputDir, "preview.jpg");
-    const vttPath = path.join(outputDir, "preview.vtt");
+  const frameCount = Math.ceil(duration / interval);
+  const rows = Math.ceil(frameCount / columns);
 
-   const filter = [
+  const spritePath = path.join(outputDir, "preview.jpg");
+  const vttPath = path.join(outputDir, "preview.vtt");
+
+  const filter = [
     `fps=1/${interval}`,
     "scale=720:405:force_original_aspect_ratio=decrease:force_divisible_by=2",
-    "pad=720:405:(ow-iw)/2:(oh-ih)/2",
-    `tile=${columns}x${rows}:padding=0:margin=0`
-].join(",");
+    "pad=720:406:(ow-iw)/2:(oh-ih)/2",
+    `tile=${columns}x${rows}:padding=0:margin=0`,
+    "setsar=1"
+  ].join(",");
 
-    await new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     FFmpeg(inputPath)
-        .outputOptions(["-vf", filter, "-frames:v 1"])
-        .output(spritePath)
-        .on("start", commandLine => {
-            console.log("Preview FFmpeg command:", commandLine);
-        })
-        .on("stderr", line => {
-            console.log("Preview FFmpeg:", line);
-        })
-        .on("end", resolve)
-        .on("error", reject)
-        .run();
-});
+      .outputOptions([
+        "-vf", filter,
+        "-frames:v", "1",
+        "-update", "1"
+      ])
+      .output(spritePath)
+      .on("start", commandLine => {
+        console.log("Preview FFmpeg command");
+      })
+      .on("stderr", line => {
+        console.log("Preview FFmpeg");
+      })
+      .on("end", resolve)
+      .on("error", reject)
+      .run();
+  });
 
-    let vtt = "WEBVTT\n\n";
+  let vtt = "WEBVTT\n\n";
 
-    for (let i = 0; i < frameCount; i++) {
-        const start = i * interval;
-        const end = Math.min((i + 1) * interval, duration);
+  for (let i = 0; i < frameCount; i++) {
+    const start = i * interval;
+    const end = Math.min((i + 1) * interval, duration);
 
-        const x = (i % columns) * 720;
-        const y = Math.floor(i / columns) * 405;
+    const x = (i % columns) * 720;
+    const y = Math.floor(i / columns) * 406;
 
-        vtt += `${formatVttTime(start)} --> ${formatVttTime(end)}\n`;
-        vtt += `preview.jpg#xywh=${x},${y},720,405\n\n`;
-    }
-    await fs.writeFile(vttPath, vtt);
-    return {
-        spritePath,
-        vttPath,
-        frameCount,
-        interval
-    }
-}
+    vtt += `${formatVttTime(start)} --> ${formatVttTime(end)}\n`;
+    vtt += `preview.jpg#xywh=${x},${y},720,406\n\n`;
+  }
+
+  await fs.writeFile(vttPath, vtt);
+
+  return {
+    spritePath,
+    vttPath,
+    frameCount,
+    interval
+  };
+};
+
 
 const formatVttTime = (seconds) => {
   const hours = Math.floor(seconds / 3600);

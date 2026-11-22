@@ -12,30 +12,35 @@ const publicVideoFileds = "title description owner thumbnail duration size forma
 const PUBLIC_VIDEO_TTL = 300;
 const VIDEO_LIST_TTL = 120;
 
-const encodeCursor = (video) => {
+const encodeCursor = (video, sortField = "publishedAt") => {
     return Buffer.from(
         JSON.stringify({
-            publishedAt: video.publishedAt,
-            id: video._id.toString()
+            [sortField]: video[sortField],
+            id: video._id
         })
     ).toString("base64url");
 };
 
-const decodeCursor = (cursor) => {
+const decodeCursor = (cursor, sortField = "publishedAt") => {
     try {
-        const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+        const decoded = JSON.parse(
+            Buffer.from(cursor, "base64url").toString("utf8")
+        );
 
-        const publishedAt = new Date(decoded.publishedAt);
+        const dateValue = decoded[sortField];
+        const date = new Date(dateValue);
 
-        if (!/^[0-9a-fA-F]{24}$/.test(decoded.id) ||!Number.isFinite(publishedAt.getTime())) {
+        if (
+            !/^[0-9a-fA-F]{24}$/.test(decoded.id) ||
+            !Number.isFinite(date.getTime())
+        ) {
             return null;
         }
 
         return {
-            publishedAt,
+            [sortField]: date,
             id: decoded.id
         };
-
     } catch (error) {
         return null;
     }
@@ -45,7 +50,9 @@ const decodeCursor = (cursor) => {
 const getAllVideo = asyncHandler(async(req, res) => { 
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
     const cursor = req.query.cursor || null;
-    const cursorData = cursor ? decodeCursor(cursor) : null;
+    const cursorData = cursor
+    ? decodeCursor(cursor, "publishedAt")
+    : null;
 
 
     if(cursor && !cursorData) {
@@ -136,7 +143,9 @@ const getMyVideos = asyncHandler(async (req, res) => {
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
 
      const cursor = req.query.cursor || null;
-     const cursorData = cursor ? decodeCursor(cursor) : null;
+     const cursorData = cursor
+    ? decodeCursor(cursor, "createdAt")
+    : null;
 
      if (cursor && !cursorData) {
         throw new ApiError(400, "Invalid cursor");
@@ -165,23 +174,19 @@ const getMyVideos = asyncHandler(async (req, res) => {
      const queryFilter = cursorData
     ? {
         ...filter,
-        publishedAt: { $ne: null },
         $or: [
-            { publishedAt: { $lt: cursorData.publishedAt } },
+            { createdAt: { $lt: cursorData.createdAt } },
             {
-                publishedAt: cursorData.publishedAt,
+                createdAt: cursorData.createdAt,
                 _id: { $lt: cursorData.id }
             }
         ]
     }
-    : {
-        ...filter,
-        publishedAt: { $ne: null }
-    };
+    : filter;
 
    const videos = await Video.find(queryFilter)
     .select("-originalKey -processedKey -previewSpriteKeys -previewVttKey")
-    .sort({ publishedAt: -1, _id: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .limit(limit + 1)
     .lean();
 
@@ -194,10 +199,12 @@ const getMyVideos = asyncHandler(async (req, res) => {
 
     const lastVideo = videos[videos.length - 1];
 
-     const nextCursor =
-        hasMore && lastVideo
-            ? encodeCursor(lastVideo)
-            : null;
+     const nextCursor = hasMore && lastVideo
+    ? encodeCursor({
+        createdAt: lastVideo.createdAt,
+        id: lastVideo._id
+    })
+    : null;
     
     const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN?.replace(/\/$/, "");
 

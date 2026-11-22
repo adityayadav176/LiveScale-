@@ -6,6 +6,7 @@ import fs from "fs/promises"
 import os from "os";
 import path from "path";
 import crypto from "crypto";
+import { Video } from "../model/Video.model.js";
 
 const videoWorker = new Worker("video-queue", 
     async (job) => {
@@ -66,6 +67,25 @@ const videoWorker = new Worker("video-queue",
                         outputDir: hlsDir,
                         videoId
                     })
+
+                   const masterPlaylistKey = `videos/${videoId}/hls/master.m3u8`;
+
+            const updatedVideo = await Video.findByIdAndUpdate(
+                videoId,
+            {
+                $set: {
+                    status: "ready",
+                    processedKey: masterPlaylistKey,
+                    previewSpriteKeys: [previewImageKey],
+                    previewVttKey
+                }
+            },
+                { returnDocument: "after", runValidators: true }
+            );
+
+            if (!updatedVideo) {
+                throw new Error(`Video not found: ${videoId}`);
+            }
 
                     return {
                         success: true,
