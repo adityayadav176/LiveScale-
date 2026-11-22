@@ -10,7 +10,7 @@ import mongoose from "mongoose";
 import { invalidateVideoCache } from "../service/cache.service.js";
 
 // part size : 10 MB
-const PART_SIZE = 10 * 1024 * 1024;
+const PART_SIZE = 100  * 1024 * 1024;
 // max video Size : 5b
 const MAX_VIDEO_SIZE = 5 * 1024 * 1024 * 1024;
 // upload expiry : 24 hours 
@@ -364,7 +364,6 @@ const completeVideoUpload = asyncHandler(async (req, res) => {
   );
 })
 
-
 const abortVideoUpload = asyncHandler(async (req, res) => {
     const { uploadId } = req.params;
 
@@ -463,7 +462,6 @@ if (deletedVideo) {
         )
     );
 });
-
 
 const getVideoUploadStatus = asyncHandler(async (req, res) => {
     const { uploadId } = req.params;
@@ -596,35 +594,12 @@ const uploadThumbnail = asyncHandler(async(req, res) => {
     )
 });
 
-const getThumbnail = asyncHandler(async(req, res) => {
-    const {videoId} = req.params;
-
-    if(!videoId || !mongoose.isValidObjectId(videoId)) {
-        throw new ApiError(400, "Invalid VideoId");
-    }
-
-    const video = await Video.findById(videoId).select("thumbnail owner");
-
-    if(!video) {
-        throw new ApiError(400, "Video Not Found");
-    }
-
-    const thumbnailUrl = await getFromS3(video.thumbnail);
-
-    return res.status(200).
-    json(
-        new ApiResponse(200, {videoId: video._id, thumbnailUrl}, "Thumbnail fetched Successfully")
-    )
-});
-
 export {
     getVideoUploadStatus,
-    completeMutipartUpload,
     abortVideoUpload,
     completeVideoUpload,
     initiateVideoUpload,
     generateMutipartUploadURLs,
     generateThumbnailURL,
     uploadThumbnail,
-    getThumbnail,
 }

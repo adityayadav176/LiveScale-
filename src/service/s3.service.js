@@ -77,24 +77,31 @@ export const getMultipartUploadUrl = async({key, UploadId, partNumber}) => {
     return await getSignedUrl(s3, command, {expiresIn: 900});
 };
 
-export const completeMutipartUpload = async({key, UploadId, parts}) => {
-    if(!key || !UploadId || !Array.isArray(parts) || parts.length === 0) {
+
+export const completeMutipartUpload = async ({ key, UploadId, parts }) => {
+    if (!key || !UploadId || !Array.isArray(parts) || parts.length === 0) {
         throw new Error("Multipart completion information is required");
     }
 
-    const sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+    const sortedParts = [...parts]
+        .map((part) => ({
+            PartNumber: part.partNumber,
+            ETag: part.ETag,
+        }))
+        .sort((a, b) => a.PartNumber - b.PartNumber);
 
     const command = new CompleteMultipartUploadCommand({
         Bucket: bucket,
         Key: key,
-        UploadId: UploadId,
+        UploadId,
         MultipartUpload: {
-            parts: sortedParts
+            Parts: sortedParts,
         },
     });
 
     return await s3.send(command);
-}
+};
+
 
 export const abortMultipartUpload = async({key, uploadId}) => {
     if(!key || !uploadId) {

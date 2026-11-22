@@ -5,7 +5,9 @@ import { connectToMongo } from "./db/db.js";
 import redis from "./db/redis.js";
 import { verifySmtp } from "./service/nodemailer.js";
 import { checkS3Connection } from "./config/s3.js";
-
+import "./queue/video.worker.js";
+import "./queue/email.worker.js";
+import "./queue/notification.worker.js";
 configDotenv();
 
 const PORT = process.env.PORT;

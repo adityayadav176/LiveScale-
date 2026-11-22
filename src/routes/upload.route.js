@@ -7,7 +7,6 @@ import {
   completeVideoUpload,
   generateMutipartUploadURLs,
   generateThumbnailURL,
-  getThumbnail,
   getVideoUploadStatus,
   initiateVideoUpload,
   uploadThumbnail,
@@ -26,6 +25,4 @@ router.get("/:uploadId/status", getVideoUploadStatus);
 // Thumbnail routes
 router.post("/:videoId/thumbnail/url", generateThumbnailURL);
 router.post("/:videoId/thumbnail/upload", uploadThumbnail);
-router.get("/:videoId/thumbnail", getThumbnail);
-
 export default router;

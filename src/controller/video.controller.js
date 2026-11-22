@@ -496,13 +496,28 @@ const getVideoPlaybackURL = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid VideoId");
     }
 
-    const video = await Video.findById(videoId)
-        .select("owner status visibility processedKey")
-        .lean();
-
-    if (!video || video.status !== "ready") {
-        throw new ApiError(404, "Video is not available for playback");
+const video = await Video.findOneAndUpdate(
+    {
+        _id: videoId,
+        status: "ready",
+        $or: [
+            { visibility: { $in: ["public", "unlisted"] } },
+            { owner: userId }
+        ]
+    },
+    {
+        $inc: { views: 1 }
+    },
+    {
+        new: true
     }
+)
+.select("owner status visibility processedKey views")
+.lean();
+
+if (!video) {
+    throw new ApiError(404, "Video not found or not authorized");
+}
 
     const isOwner =
         userId && video.owner.toString() === userId.toString();
