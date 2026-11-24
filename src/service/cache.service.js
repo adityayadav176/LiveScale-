@@ -69,10 +69,20 @@ export const getCacheVersion = async(key) => {
     }
 }
 
+export const incrementVideoViews = async (videoId) => {
+    try {
+        return await redis.incr(`video:${videoId}:views`);
+    } catch (error) {
+        console.error("Redis view increment failed:", error.message);
+        return null;
+    }
+};
+
 export const invalidateVideoCache = async(video) => {
     await Promise.all([
         deleteCache(`video:public:${video._id}`),
         incrementCacheVersion("videos:public:version"),
-        incrementCacheVersion(`videos:user:${video.owner}:version`)
+        incrementCacheVersion(`videos:user:${video.owner}:version`),
+        incrementCacheVersion(`video:user:${video.owner}:${video._id}:version`)
     ]);
 }

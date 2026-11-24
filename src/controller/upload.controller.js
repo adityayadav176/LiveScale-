@@ -3,7 +3,7 @@ import { Upload } from "../model/upload.model.js"
 import { Video } from "../model/Video.model.js"
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js"
-import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, deleteFromS3, getFromS3, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
+import { abortMultipartUpload, checkS3ObjectExists, completeMutipartUpload, createMultipartUpload, deleteFromS3, getMultipartUploadUrl, getThumbnailuploadUrl } from "../service/s3.service.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import videoQueue from './../queue/video.queue.js';
 import mongoose from "mongoose";

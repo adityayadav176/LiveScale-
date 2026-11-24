@@ -3,10 +3,10 @@ import {ApiResponse} from "../utils/ApiResponse.js";
 import {ApiError} from "../utils/ApiError.js";
 import {Video} from "../model/Video.model.js"
 import mongoose from "mongoose";
-import { deleteCache, getCache, getCacheVersion, incrementCacheVersion, setCache } from "../service/cache.service.js";
-import { getFromS3 } from "../service/s3.service.js";
+import { getCache, getCacheVersion, incrementVideoViews, setCache } from "../service/cache.service.js";
 import videoQueue from "../queue/video.queue.js";
 import { invalidateVideoCache } from "../service/cache.service.js";
+import { getSignedCloudFrontURL } from "../service/cloudfront.service.js";
 const publicVideoFileds = "title description owner thumbnail duration size format resolution views likesCount commentsCount publishedAt visibility status createdAt";
 
 const PUBLIC_VIDEO_TTL = 300;
@@ -45,6 +45,21 @@ const decodeCursor = (cursor, sortField = "publishedAt") => {
         return null;
     }
 };
+
+const toSafeVideo = (video) => {
+    const data = video.toObject ? video.toObject() : {...video};
+
+     const {
+        originalKey,
+        processedKey,
+        previewSpriteKeys,
+        previewVttKey,
+        __v,
+        ...safeVideo
+    } = data;
+
+    return safeVideo;
+}
 
 
 const getAllVideo = asyncHandler(async(req, res) => { 
@@ -95,7 +110,7 @@ const getAllVideo = asyncHandler(async(req, res) => {
 } : filter;
 
     const videos = await Video.find(queryFilter)
-    .select("title owner thumbnail processedKey duration views publishedAt")
+    .select("title owner thumbnail  duration views publishedAt")
     .sort({publishedAt: -1, _id: -1})
     .limit(limit + 1)
     .lean();
@@ -199,11 +214,8 @@ const getMyVideos = asyncHandler(async (req, res) => {
 
     const lastVideo = videos[videos.length - 1];
 
-     const nextCursor = hasMore && lastVideo
-    ? encodeCursor({
-        createdAt: lastVideo.createdAt,
-        id: lastVideo._id
-    })
+    const nextCursor = hasMore && lastVideo
+    ? encodeCursor(lastVideo, "createdAt")
     : null;
     
     const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN?.replace(/\/$/, "");
@@ -278,6 +290,7 @@ const getVideoById = asyncHandler(async (req, res) => {
 
 const getMyVideoById = asyncHandler(async (req, res) => {
     const {videoId} = req.params;
+    const userId = req.user._id;
 
     if(!videoId || !mongoose.isValidObjectId(videoId)) {
         throw new ApiError(400, "Invalid VideoId");
@@ -302,12 +315,10 @@ const getMyVideoById = asyncHandler(async (req, res) => {
         );
     }
 
-    const userId = req.user._id;
-
     const video = await Video.findOne({
         _id: videoId,
         owner: userId
-    }).select("-originalKey -processedKey").lean();
+    }).select("-originalKey -processedKey -previewSpriteKeys -previewVttKey").lean();
 
     if(!video) {
         throw new ApiError(404, "Video Not Found");
@@ -354,10 +365,11 @@ const updateVideoMetaData = asyncHandler(async (req, res) => {
     }
 
     if (description !== undefined) {
-        if (typeof description !== "string" || !description.trim()) {
-            throw new ApiError(400, "Description Cannot Be Empty");
-        }
-        updateData.description = description.trim();
+        if (typeof description !== "string") {
+        throw new ApiError(400, "Invalid Description");
+    }
+
+    updateData.description = description.trim();
     }
 
     const video = await Video.findOneAndUpdate(
@@ -373,7 +385,7 @@ const updateVideoMetaData = asyncHandler(async (req, res) => {
     await invalidateVideoCache(video);
 
     return res.status(200).json(
-        new ApiResponse(200, video, "Video Updated Successfully")
+        new ApiResponse(200, toSafeVideo(video), "Video Updated Successfully")
     );
 });
 
@@ -413,7 +425,7 @@ const publishVideo = asyncHandler(async (req, res) => {
     await invalidateVideoCache(video);
 
     return res.status(200).json(
-        new ApiResponse(200, video, "Video Published Successfully")
+        new ApiResponse(200, toSafeVideo(video), "Video Published Successfully")
     );
 });
 
@@ -428,6 +440,8 @@ const unPublishedVideo = asyncHandler(async (req, res) => {
     const video = await Video.findOneAndUpdate(
         {
             _id: videoId,
+            status: "ready",
+            visibility: "public",
             owner: userId
         },
         {
@@ -443,7 +457,7 @@ const unPublishedVideo = asyncHandler(async (req, res) => {
     );
 
     if (!video) {
-        throw new ApiError(404, "Video Not Found");
+        throw new ApiError(404, "Video not found or not ready for Unpublishing");
     }
 
     await invalidateVideoCache(video);
@@ -451,7 +465,7 @@ const unPublishedVideo = asyncHandler(async (req, res) => {
     return res.status(200).json(
         new ApiResponse(
             200,
-            video,
+            toSafeVideo(video),
             "Video Unpublished Successfully"
         )
     );
@@ -474,6 +488,13 @@ const deleteVideo = asyncHandler(async(req, res) => {
         throw new ApiError(404, "Video Not Found");
     }
 
+    await invalidateVideoCache(video);
+
+    await videoQueue.add(
+        "delete-video-files",
+        {s3Keys},
+    )
+
     const s3Keys = [
             video.originalKey,
             video.processedKey,
@@ -483,15 +504,8 @@ const deleteVideo = asyncHandler(async(req, res) => {
     ].filter(Boolean);
     await video.deleteOne();
 
-    await invalidateVideoCache(video);
-
-    await videoQueue.add(
-        "delete-video-files",
-        {s3Keys},
-    )
-
     return res.status(200).json(
-        new ApiResponse(200, video, "Video deleted successfully. S3 cleanup has been scheduled.")
+        new ApiResponse(200, videoId, "Video deleted successfully. S3 cleanup has been scheduled.")
     )
 })
 
@@ -503,14 +517,20 @@ const getVideoPlaybackURL = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid VideoId");
     }
 
-const video = await Video.findOneAndUpdate(
+    const accessConditions = [
+        { visibility: { $in: ["public", "unlisted"] } }
+    ];
+
+    if (userId) {
+        accessConditions.push({ owner: userId });
+    }
+
+    const video = await Video.findOneAndUpdate(
     {
         _id: videoId,
         status: "ready",
-        $or: [
-            { visibility: { $in: ["public", "unlisted"] } },
-            { owner: userId }
-        ]
+        processedKey: {$exists: true, $nin: [null, ""]},
+        $or: accessConditions
     },
     {
         $inc: { views: 1 }
@@ -519,12 +539,14 @@ const video = await Video.findOneAndUpdate(
         new: true
     }
 )
-.select("owner status visibility processedKey views")
-.lean();
-
-if (!video) {
-    throw new ApiError(404, "Video not found or not authorized");
-}
+    .select("owner status visibility processedKey views")
+    .lean();
+    
+    if (!video) {
+        throw new ApiError(404, "Video not found or not authorized");
+    }
+    
+    await incrementVideoViews(videoId);
 
     const isOwner =
         userId && video.owner.toString() === userId.toString();
@@ -542,7 +564,7 @@ if (!video) {
         throw new ApiError(404, "Processed video is not available");
     }
 
-    const playbackURL = await getFromS3(video.processedKey);
+    const playbackURL = await getSignedCloudFrontURL(video.processedKey);
 
     return res.status(200).json(
         new ApiResponse(

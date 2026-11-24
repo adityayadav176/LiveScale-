@@ -5,13 +5,14 @@ import {ApiResponse} from "../utils/ApiResponse.js";
 import { emailQueue } from "../queue/email.queue.js";
 import { cookieOption, generateAccessToken, generateRefreshToken } from "../utils/generateToken.js";
 import { Session } from "../model/Session.model.js";
-import { checkS3ObjectExists, deleteFromS3, getFromS3, uploadToS3 } from '../service/s3.service.js';
+import { checkS3ObjectExists, deleteFromS3, uploadToS3 } from '../service/s3.service.js';
 import { deleteOtp, generateOtp, otpKey, storeOtp, verifyOtp } from "../service/otp.service.js";
 import crypto from "crypto";
 import redis from "../db/redis.js";
 import mongoose from "mongoose"
 import jwt from "jsonwebtoken";
 import {UAParser} from "ua-parser-js";
+import {getSignedCloudFrontURL } from '../service/cloudfront.service.js';
 
 const generatePasswordResetToken = () => {
     return crypto.randomBytes(32).toString("hex");
@@ -246,7 +247,7 @@ const getAvatar = asyncHandler(async(req, res) => {
         throw new ApiError(404, "Avatar Not Found");
     }
 
-    const url = await getFromS3(avatarKey);
+    const url = await getSignedCloudFrontURL(avatarKey, 600);
 
     return res.status(200)
     .json(
@@ -373,7 +374,7 @@ const getCoverImage = asyncHandler(async(req, res) => {
         throw new ApiError(404, "CoverImage Not Found");
     }
 
-    const url = await getFromS3(CoverImageKey);
+    const url = await getSignedCloudFrontURL(CoverImageKey, 600);
 
     return res.status(200)
     .json(
@@ -423,9 +424,25 @@ const fetchUser = asyncHandler(async(req, res) => {
         throw new ApiError(404, "User Not Found");
     }
 
+    const safeUser = user.toObject();
+
+const avatarKey = safeUser.avatarKey;
+const coverImageKey = safeUser.coverImageKey;
+
+delete safeUser.avatarKey;
+delete safeUser.coverImageKey;
+
+safeUser.avatarUrl = avatarKey
+    ? getSignedCloudFrontURL(avatarKey, 600)
+    : null;
+
+safeUser.coverImageUrl = coverImageKey
+    ? getSignedCloudFrontURL(coverImageKey, 600)
+    : null;
+
     return res.status(200)
     .json(
-        new ApiResponse(200, user, "User Fetched Successfully")
+        new ApiResponse(200, safeUser, "User Fetched Successfully")
     )
 })
 
