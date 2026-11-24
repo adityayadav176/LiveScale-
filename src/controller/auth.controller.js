@@ -426,19 +426,19 @@ const fetchUser = asyncHandler(async(req, res) => {
 
     const safeUser = user.toObject();
 
-const avatarKey = safeUser.avatarKey;
-const coverImageKey = safeUser.coverImageKey;
-
-delete safeUser.avatarKey;
-delete safeUser.coverImageKey;
-
-safeUser.avatarUrl = avatarKey
-    ? getSignedCloudFrontURL(avatarKey, 600)
-    : null;
-
-safeUser.coverImageUrl = coverImageKey
-    ? getSignedCloudFrontURL(coverImageKey, 600)
-    : null;
+    const avatarKey = safeUser.avatarKey;
+    const coverImageKey = safeUser.coverImageKey;
+    
+    delete safeUser.avatarKey;
+    delete safeUser.coverImageKey;
+    
+    safeUser.avatarUrl = avatarKey
+        ? getSignedCloudFrontURL(avatarKey, 600)
+        : null;
+    
+    safeUser.coverImageUrl = coverImageKey
+        ? getSignedCloudFrontURL(coverImageKey, 600)
+        : null;
 
     return res.status(200)
     .json(

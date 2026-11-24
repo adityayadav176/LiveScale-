@@ -1,6 +1,8 @@
 import {getSignedUrl} from "@aws-sdk/cloudfront-signer"
 
-const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN?.replace(/\/+$/, "");
+const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN
+    ?.replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
 const KEY_PAIR_ID = process.env.CLOUDFRONT_KEY_PAIR_ID;
 const PRIVATE_KEY = process.env.CLOUDFRONT_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
@@ -9,7 +11,7 @@ export const getCloudFrontURL = (key) => {
         throw new Error("CloudFront domain or file key is missing");
     }
 
-    return `${CLOUDFRONT_DOMAIN}/${key.replace(/^\/+/, "")}`;
+    return `https://${CLOUDFRONT_DOMAIN}/${key.replace(/^\/+/, "")}`;
 }
 
 export const getSignedCloudFrontURL = (key, expiresIn = 300) => {
