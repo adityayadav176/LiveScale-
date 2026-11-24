@@ -62,6 +62,8 @@ const SignupUser = asyncHandler(async(req, res) => {
 
     const safeUser = user.toObject();
     delete safeUser.password;
+    delete safeUser.passwordChangedAt;
+    delete safeUser.isEmailVerified;
 
     return res.status(201)
     .json(
