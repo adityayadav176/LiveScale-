@@ -56,7 +56,14 @@ const sessionSchema = new Schema(
 
         lastActiveAt: {
             type: Date,
-            default: Date.now
+            default: Date.now,
+            select: false,
+        },
+
+        sessionId: {
+            type: String,
+            required: true,
+            unique: true,
         },
 
         expiresAt: {

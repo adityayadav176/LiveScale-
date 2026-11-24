@@ -19,9 +19,9 @@ export const verifyUser = asyncHandler(async(req, res, next) => {
         throw new ApiError(401, "Invalid or expired access token");
     }
 
-    const {userId} = decodedToken;
+    const {userId, sessionId} = decodedToken;
  
-    if (!userId) {
+    if (!userId || !sessionId) {
         throw new ApiError(401, "Invalid access token payload");
     }
 
@@ -33,6 +33,7 @@ export const verifyUser = asyncHandler(async(req, res, next) => {
 
     const session = await Session.findOne({
         user: userId,
+        sessionId,
         revokedAt: null,
         expiresAt: {$gt: new Date()}
     });
@@ -42,7 +43,7 @@ export const verifyUser = asyncHandler(async(req, res, next) => {
     }
 
     req.user = user;
-    req.session = session;
+    req.sessionId = session.sessionId;
 
     next();  
 })

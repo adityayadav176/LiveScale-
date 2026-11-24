@@ -21,7 +21,8 @@ const userSchema = new Schema(
         description: {
             type: String,
             trim: true,
-            default: ""
+            default: "",
+            select: false,
         },
 
         email: {
@@ -48,11 +49,13 @@ const userSchema = new Schema(
         avatarKey: {
             type: String,
             default: null,
+            select: false,
         },
 
         coverImageKey: {
             type: String,
             default: null,
+            select: false,
         },
 
         passwordChangedAt: {

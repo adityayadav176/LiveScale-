@@ -5,11 +5,12 @@ import {ApiResponse} from "../utils/ApiResponse.js";
 import { emailQueue } from "../queue/email.queue.js";
 import { cookieOption, generateAccessToken, generateRefreshToken } from "../utils/generateToken.js";
 import { Session } from "../model/Session.model.js";
-import { mongoose } from 'mongoose';
 import { checkS3ObjectExists, deleteFromS3, getFromS3, uploadToS3 } from '../service/s3.service.js';
 import { deleteOtp, generateOtp, otpKey, storeOtp, verifyOtp } from "../service/otp.service.js";
 import crypto from "crypto";
 import redis from "../db/redis.js";
+import mongoose from "mongoose"
+import jwt from "jsonwebtoken";
 import {UAParser} from "ua-parser-js";
 
 const generatePasswordResetToken = () => {
@@ -59,9 +60,12 @@ const SignupUser = asyncHandler(async(req, res) => {
         data: {fullName}
     })
 
+    const safeUser = user.toObject();
+    delete safeUser.password;
+
     return res.status(201)
     .json(
-        new ApiResponse(201, user, "User Account Created Successfully")
+        new ApiResponse(201, safeUser, "User Account Created Successfully")
     )
 })
 
@@ -75,12 +79,22 @@ const loginUser = asyncHandler(async (req, res) => {
     const normalizedEmail = email?.trim().toLowerCase();
     const normalizedUsername = username?.trim();
 
+    const conditions = [];
+
+    if(normalizedEmail) {
+        conditions.push({email: normalizedEmail});
+    }
+
+    if(normalizedUsername) {
+        conditions.push({username: normalizedUsername});
+    }
+
     const user = await User.findOne({
-        $or: [{username: normalizedUsername}, {email: normalizedEmail}]
+        $or: conditions
     }).select("+password");
 
     if(!user) {
-        throw new ApiError(404, "User Not Found");
+        throw new ApiError(401, "Invalid Credentials");
     }
 
     const isPasswordCorrect = await user.isPasswordCorrect(password);
@@ -89,8 +103,10 @@ const loginUser = asyncHandler(async (req, res) => {
         throw new ApiError(401, "Invalid Credentials");
     }
 
-    const accessToken = generateAccessToken(user._id);
-    const refreshToken = generateRefreshToken(user._id);
+    const sessionId = crypto.randomUUID();
+
+    const accessToken = generateAccessToken(user._id, sessionId);
+    const refreshToken = generateRefreshToken(user._id, sessionId);
 
     const parser = new UAParser(req.headers["user-agent"]);
     const deviceInfo = parser.getResult();
@@ -99,7 +115,7 @@ const loginUser = asyncHandler(async (req, res) => {
     await Session.create({
         user: user._id,
         refreshTokenHash: refreshToken,
-
+        sessionId,
         deviceName:
             deviceInfo.device.model ||
             deviceInfo.os.name ||
@@ -121,17 +137,20 @@ const loginUser = asyncHandler(async (req, res) => {
         )
     });
 
+    const safeUser = user.toObject();
+    delete safeUser.password;
+
     return res.status(200)
     .cookie("accessToken", accessToken, {
         ...cookieOption(),
         maxAge: 15 * 60 * 1000
     })
     .cookie("refreshToken", refreshToken, {
-        ...cookieOption,
+        ...cookieOption(),
         maxAge: 30 * 24 * 60 * 60 * 1000
     })
     .json(
-        new ApiResponse(200, user, "Login SucccessFully")
+        new ApiResponse(200, safeUser, "Login SucccessFully")
     )
 })
 
@@ -166,10 +185,9 @@ const generateAvatarUploadUrl  = asyncHandler(async(req, res) => {
 
 const updateAvatar = asyncHandler(async(req, res) => {
     const userId = req.user._id;
+    const { key } = req.body;
 
-    const user = await User.findById(userId);
-
-    const key = user.avatarKey;
+    const user = await User.findById(userId).select("+avatarKey");
 
     if(!user) {
         throw new ApiError(401, "Unauthorized Access Denied");
@@ -214,9 +232,9 @@ const updateAvatar = asyncHandler(async(req, res) => {
 const getAvatar = asyncHandler(async(req, res) => {
     const userId = req.user._id;
 
-    const user = User.findById(userId);
+    const user = await User.findById(userId).select("+avatarKey");
 
-    if(user) {
+    if(!user) {
         throw new ApiError(401, "Unauthorized Access Denied");
     }
 
@@ -237,16 +255,16 @@ const getAvatar = asyncHandler(async(req, res) => {
 const deleteAvatar = asyncHandler(async(req, res) => {
     const userId = req.user._id;
 
-    const user = await User.findById(userId);
-
-    const key = user.avatarKey;
-
-    if (key) {
-        throw new ApiError(404, "Avatar Not Found");
-    }
+    const user = await User.findById(userId).select("+avatarKey");
 
     if(!user) {
         throw new ApiError(401, "Unauthorized Access Denied");
+    }
+
+    const key = user.avatarKey;
+
+    if (!key) {
+        throw new ApiError(404, "Avatar Not Found");
     }
 
     await deleteFromS3(key);
@@ -294,10 +312,9 @@ const generateCoverImageUploadUrl  = asyncHandler(async(req, res) => {
 
 const updateCoverImage = asyncHandler(async(req, res) => {
     const userId = req.user._id;
+    const { key } = req.body;
 
-    const user = await User.findById(userId);
-
-    const key = user.coverImageKey
+    const user = await User.findById(userId).select("+coverImageKey");
 
     if(!user) {
         throw new ApiError(401, "Unauthorized Access Denied");
@@ -329,32 +346,32 @@ const updateCoverImage = asyncHandler(async(req, res) => {
         try {
             await deleteFromS3(oldCoverImageKey);
         } catch (error) {
-            console.error("Old Avatar Deletion Failed", error);
+            console.error("Old CoverImage Deletion Failed", error);
         }
     }
 
     return res.status(200)
     .json(
-        new ApiResponse(200, user.coverImageKey, "Avatar Update Successfully")
+        new ApiResponse(200, user.coverImageKey, "CoverImage Update Successfully")
     )
 })
 
 const getCoverImage = asyncHandler(async(req, res) => {
     const userId = req.user._id;
 
-    const user = User.findById(userId);
+    const user = await User.findById(userId).select("+coverImageKey");
 
-    if(user) {
+    if(!user) {
         throw new ApiError(401, "Unauthorized Access Denied");
     }
 
     const CoverImageKey = user.coverImageKey;
 
     if(!CoverImageKey) {
-        throw new ApiError(404, "Avatar Not Found");
+        throw new ApiError(404, "CoverImage Not Found");
     }
 
-    const url = await getFromS3(coverImageKey);
+    const url = await getFromS3(CoverImageKey);
 
     return res.status(200)
     .json(
@@ -365,12 +382,16 @@ const getCoverImage = asyncHandler(async(req, res) => {
 const deleteCoverImage = asyncHandler(async(req, res) => {
     const userId = req.user._id;
 
-    const user = await User.findById(userId);
-
-    const key = user.coverImageKey
+    const user = await User.findById(userId).select("+coverImageKey");
 
     if(!user) {
         throw new ApiError(401, "Unauthorized Access Denied");
+    }
+
+    const key = user.coverImageKey
+
+    if(!key) {
+        throw new ApiError(404, "Cover Image Not Found");
     }
 
     await deleteFromS3(key);
@@ -390,11 +411,11 @@ const deleteCoverImage = asyncHandler(async(req, res) => {
 const fetchUser = asyncHandler(async(req, res) => {
     const userId = req.user._id;
 
-    if(!userId || !mongoose.isvalidObjectId(userId)) {
+    if(!userId || !mongoose.isValidObjectId(userId)) {
         throw new ApiError(400, "Invalid UserId");
     }
 
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select("+description +avatarKey +coverImageKey");
 
     if(!user) {
         throw new ApiError(404, "User Not Found");
@@ -426,28 +447,27 @@ const sendUpdatePasswordOTP = asyncHandler(async(req, res) => {
     try {
         const otp = generateOtp();
         await storeOtp(normalizedEmail, otp);
-    
-        await emailQueue.add({
+
+        await emailQueue.add("send-email", {
             to: normalizedEmail,
-            type: passwordReset,
-            data: otp,
-        });
+            type: "passwordReset",
+            data: {otp},
+        })
     } catch (error) {
         throw new ApiError(400, "Otp Storing Failed");
     }
 
     const remainingTTL = await redis.ttl(otpKey(normalizedEmail));
-    const expiresAt = Date.now() + remainingTTL * 1000;
-
     if (remainingTTL <= 0) {
         throw new ApiError(500, "OTP Expiry Could Not Be Retrieved");
     }
+    const expiresAt = Date.now() + remainingTTL * 1000;
 
     const resetFlowToken = generatePasswordResetToken();
     await redis.set(`password-reset:${resetFlowToken}`, normalizedEmail, "EX", 1200);
     return res.status(200)
     .cookie("passwordResetToken", resetFlowToken, {
-        ...cookieOption,
+        ...cookieOption(),
         maxAge: 20 * 60 * 1000
     })
     .json(
@@ -498,20 +518,26 @@ const updatePassword = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid OTP");
     }
 
-    const user = await User.findOneAndUpdate(
-        { email },
-        { $set: { password } },
-        { new: true, runValidators: true }
-    );
+    const user = await User.findOne({email}).select("+password");
 
     if (!user) {
        throw new ApiError(404, "User Not Found");
     }
 
+    user.password = password;
+    user.passwordChangedAt = new Date();
+
+    await user.save();
+
+    await Session.updateMany(
+        { user: user._id, revokedAt: null },
+        { $set: { revokedAt: new Date() } }
+    );
+
     await redis.del(`password-reset:${resetFlowToken}`);
     await deleteOtp(email);
 
-    res.clearCookie("passwordResetToken", cookieOption);
+    res.clearCookie("passwordResetToken", cookieOption());
 
     return res.status(200).json(
         new ApiResponse(200, "Password Changed Successfully")
@@ -519,8 +545,7 @@ const updatePassword = asyncHandler(async (req, res) => {
 });
 
 const sendVerificationOTP = asyncHandler(async(req, res) => {
-    const user = await User.findById(req.user._id);
-    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findById(req.user._id).select("+isEmailVerified");
 
     if (!user) {
         return res.status(200).json(
@@ -528,27 +553,30 @@ const sendVerificationOTP = asyncHandler(async(req, res) => {
         );
     }
 
-    const email = user.email;
+    if(user.isEmailVerified) {
+        throw new ApiError(400, "Email Already Verified");
+    }
+
+    const normalizedEmail = user.email.trim().toLowerCase();
 
     try {
         const otp = generateOtp();
         await storeOtp(normalizedEmail, otp);
 
-        await emailQueue.add({
+        await emailQueue.add("send-email", {
             to: normalizedEmail,
-            type: emailVerification,
-            data: otp,
+            type: "emailVerification",
+            data: {otp},
         })
     } catch (error) {
         throw new ApiError(400, "Otp Storing Failed");
     }
 
     const remainingTTL = await redis.ttl(otpKey(normalizedEmail));
-    const expiresAt = Date.now() + remainingTTL * 1000;  
-    
     if (remainingTTL <= 0) {
         throw new ApiError(500, "OTP Expiry Could Not Be Retrieved");
     }
+    const expiresAt = Date.now() + remainingTTL * 1000;  
 
     return res.status(200)
     .json(
@@ -611,11 +639,11 @@ const logoutUser = asyncHandler(async(req, res) => {
         throw new ApiError(401, "Unauthorized Access Denied");
     }
 
-    await Session.findOneAndDelete({ user: user._id });
+    await Session.findOneAndDelete({ user: user._id, sessionId: req.sessionId });
 
     return res.status(200)
-    .clearCookie("accessToken", cookieOption)
-    .clearCookie("refreshToken", cookieOption)
+    .clearCookie("accessToken", cookieOption())
+    .clearCookie("refreshToken", cookieOption())
     .json(
         new ApiResponse(200, {}, "User Logout Successfully")
     )
@@ -636,12 +664,9 @@ const refreshAccessToken = asyncHandler(async(req, res) => {
         throw new ApiError(401, "Invalid or Expired Refresh Token");
     }
 
-    if(!decodedToken) {
-        throw new ApiError(401, "Invalid Token. Unauthorized!");
-    }
-
       const session = await Session.findOne({
-        user: decodedToken._id,
+        sessionId: decodedToken.sessionId,
+        user: decodedToken.userId,
         revokedAt: null,
         expiresAt: { $gt: new Date() }
     }).select("+refreshTokenHash");
@@ -662,10 +687,13 @@ const refreshAccessToken = asyncHandler(async(req, res) => {
         throw new ApiError(401, "User Not Found");
     }
 
-    const accessToken = generateAccessToken(user._id);
+    const accessToken = generateAccessToken(user._id, session.sessionId);
 
     return res.status(200)
-        .cookie("accessToken", accessToken, cookieOption)
+        .cookie("accessToken", accessToken, {
+            ...cookieOption(),
+            maxAge: 15 * 60 * 1000
+        })
         .json(
             new ApiResponse(200, {}, "Access Token Refreshed Successfully")
     );
@@ -674,26 +702,26 @@ const refreshAccessToken = asyncHandler(async(req, res) => {
 const updateProfile = asyncHandler(async(req, res) => {
     const {username, fullName, description} = req.body;
 
-    if (!username && !fullName) {
+    if (username === undefined && fullName === undefined && description === undefined) {
         throw new ApiError(400, "At Least One Field Is Required To Be Changed");
     }
 
     const userId = req.user._id;
 
-    const updateFileds = {};
+    const updateFields  = {};
 
-    if(username) updateFileds.username = username;
-    if(fullName) updateFileds.fullName = fullName;
-    if(description) updateFileds.description = description;
+    if(username !== undefined) updateFields.username = username.trim().toLowerCase();
+    if(fullName !== undefined) updateFields.fullName = fullName;
+    if(description !== undefined) updateFields.description = description;
 
-    const user = User.findByIdAndUpdate(
-        { userId },
-        { $set: updateFileds },
+    const user = await User.findOneAndUpdate(
+        { _id: userId },
+        { $set: updateFields  },
         { new: true, runValidators: true },
-    )
+    ).select("+description")
 
     if(!user) {
-        throw new ApiError(401, "Unauthorized Access Denied");
+        throw new ApiError(404, "User Not Found");
     }
 
     return res.status(200).
